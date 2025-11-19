@@ -24,6 +24,7 @@
  * @brief Defines the available video modes.
  */
 typedef enum {
+    CGA320x200x2g, // 320x200, 2 bits per pixel (4 grays)
     CGA320x200x2, // 320x200, 2 bits per pixel (4 colors)
     CGA640x200x1  // 640x200, 1 bit per pixel (2 colors)
 } VIDEOMODE;

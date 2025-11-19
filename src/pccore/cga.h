@@ -15,6 +15,8 @@
 #define CGA_VIDEO_RAM_START 0xB8000
 // Standard PC I/O port for CGA Color Select Register
 #define CGA_COLOR_REGISTER_PORT 0x3D9
+// Standard PC I/O port for CGA Mode Control Register
+#define CGA_MODE_CONTROL_PORT 0x3D8
 
 // CGA 320x200 memory layout details from cga_win.c
 #define CGA_BYTES_PER_LINE 80
@@ -53,6 +55,28 @@ static const RgbColor g_cga16ColorPalette[16] = {
     {255, 255, 255}  /* 15: White */
 };
 
+/**
+ * @brief Fixed palette for 320x200 B/W mode (Mode 5) - Grayscale emulation.
+ * Colors 1, 2, and 3 are set to distinct gray levels.
+ */
+static const RgbColor g_cgaGrayscalePalette[4] = {
+    {0, 0, 0},         /* 0: Placeholder for Background/Border (Handled by 0x3D9) */
+    {85, 85, 85},      /* 1: Low Gray */
+    {170, 170, 170},   /* 2: Medium Gray */
+    {255, 255, 255}    /* 3: White */
+};
+
+/**
+ * @brief Fixed palette for 320x200 B/W mode (Mode 5) - Standard RGB output.
+ * Colors 1, 2, and 3 are fixed to Cyan, Red, White.
+ */
+static const RgbColor g_cgaCyanRedWhitePalette[4] = {
+    {0, 0, 0},         /* 0: Placeholder for Background/Border (Handled by 0x3D9) */
+    {0, 170, 170},     /* 1: Cyan (from 16-color index 3) */
+    {170, 0, 0},       /* 2: Red (from 16-color index 4) */
+    {255, 255, 255}    /* 3: White (from 16-color index 15) */
+};
+
 // --- Function Prototypes for CGA Modes ---
 
 /**
@@ -63,6 +87,15 @@ static const RgbColor g_cga16ColorPalette[16] = {
  * @param pccore A const pointer to the PC core state.
  */
 void render320x200x2(IMAGE* image, PCCORE pccore);
+
+/**
+ * @brief Renders the 320x200 4-color "Mode 5" (Switches between Grayscale/Cyan-Red-White).
+ * Reads from pccore->memory, pccore->port 0x3D9 and 0x3D8.
+ *
+ * @param image  Pointer to the output image buffer.
+ * @param pccore A const pointer to the PC core state.
+ */
+void render320x200x2g(IMAGE* image, PCCORE pccore);
 
 /**
  * @brief Renders the 640x200 2-color mode.

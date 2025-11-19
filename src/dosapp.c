@@ -1,6 +1,8 @@
 #include "dosapp.h"
 #include <stdio.h> /* For printf */
 
+#include <stdlib.h> /* For rand */
+
 #include "turboc/dos.h"
 #include "turboc/bios.h"
 
@@ -26,10 +28,16 @@ int dos_main(int argc, char *argv[])
     cga_mem[0] = 255;
 
     regs.h.ah = 0;
-    regs.h.al = 4;
+    regs.h.al = 5;
     int86(0x10,&regs,&regs);
 
     outportb(0x3d9,0);
+
+    for(i=0;i<172;i++){
+        cga_mem[i] = rand() & 0xFF;
+    }
+
+    outportb(0x3d8,0);
 
     do{
         while(bioskey (1)==0);

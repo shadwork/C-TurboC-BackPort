@@ -32,6 +32,11 @@ void render(IMAGE* image, PCCORE pccore) {
             render320x200x2(image, pccore);
             break;
 
+        case CGA320x200x2g:
+            // Call the specific function for 320x200x2 gray mode
+            render320x200x2g(image, pccore);
+            break;
+
         case CGA640x200x1:
             // Call the specific function for 640x200x1 mode
             render640x200x1(image, pccore);

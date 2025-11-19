@@ -36,7 +36,14 @@ void setVideoMode(int mode){
     case 4:
         pccore.mode = CGA320x200x2;
         break;
-    
+    case 5:
+        pccore.mode = CGA320x200x2g;
+        // its grey by default
+        pccore.port[CGA_MODE_CONTROL_PORT] = 0x4; 
+        break;    
+    case 6:
+        pccore.mode = CGA640x200x1;
+        break;          
     default:
         break;
     }
