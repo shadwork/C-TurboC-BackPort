@@ -29,16 +29,14 @@ int dos_main(int argc, char *argv[])
 
     regs.h.ah = 0;
 
-    regs.h.al = 0;
+    regs.h.al = 3;
     int86(0x10,&regs,&regs);
 
-    outportb(0x3d9,0);
+    outportb(0x3D8,(char)255);
 
     for(i=0;i<172;i++){
         cga_mem[i] = rand() & 0xFF;
     }
-
-    outportb(0x3d8,0);
 
     do{
         while(bioskey (1)==0);

@@ -16,13 +16,16 @@
 
 // Standard PC address for CGA video memory buffer
 #define CGA_VIDEO_RAM_START 0xB8000
+
+#define CGA_COLOR_REGISTER_PORT 0x3D9
 // Standard PC I/O port for CGA Color Select Register
 // |7|6|5|4|3|2|1|0|  3D9 Color Select Register (3B9 not used)
 //  | | | | | `-------- screen/border RGB
 //  | | | | `--------- select intensity setting
 //  | | | `---------- background intensity
 //  `--------------- unused
-#define CGA_COLOR_REGISTER_PORT 0x3D9
+
+#define CGA_MODE_CONTROL_PORT 0x3D8
 // Standard PC I/O port for CGA Mode Control Register
 // |7|6|5|4|3|2|1|0|  3D8 Mode Select Register
 //  | | | | | | | `---- 1 = 80x25 text, 0 = 40x25 text
@@ -32,7 +35,16 @@
 //  | | | `-------- 1 = 640x200 B/W graphics
 //  | | `--------- 1 = blink, 0 = no blink
 //  `------------ unused
-#define CGA_MODE_CONTROL_PORT 0x3D8
+
+#define CGA_MONO_CONTROL_PORT 0x3B8
+// Standard PC I/O port for BW CRT Control Port
+// |7|6|5|4|3|2|1|0|  3B8 CRT Control Port
+//  | | | | | | | `---- 1 = 80x25 text
+//  | | | | | `------- unused
+//  | | | | `-------- 1 = enable video signal
+//  | | | `--------- unused
+//  | | `---------- 1 = blinking on
+//  `------------- unused
 
 // CGA 320x200 memory layout details from cga_win.c
 #define CGA_BYTES_PER_LINE 80
@@ -172,5 +184,23 @@ void render640x200x1(IMAGE* image, PCCORE pccore);
  * @param pccore A const pointer to the PC core state.
  */
 void render40x25(IMAGE* image, PCCORE pccore);
+
+/**
+ * @brief Renders the 80x25 text mode (Mode 1) with support for blinking and B/W selection.
+ *
+ * In CGA text modes, video memory is organized as character/attribute pairs:
+ * - Byte 0: ASCII character code (index into font table)
+ * - Byte 1: Attribute byte (Foreground/Background/Blink)
+ *
+ * The screen layout is 80 columns × 25 rows = 2000 characters = 4000 bytes.
+ * Each character is rendered using the 8x8 font, resulting in 640x200 pixels.
+ *
+ * Palette selection (Color vs. Grayscale) is controlled by:
+ * - Mode Control Register (0x3D8) Bit 2 (0x04): 1 = B/W, 0 = Color.
+ *
+ * @param image  Pointer to the output image buffer.
+ * @param pccore A const pointer to the PC core state.
+ */
+void render80x25(IMAGE* image, PCCORE pccore);
 
 #endif // CGA_H

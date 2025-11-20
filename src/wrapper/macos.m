@@ -19,6 +19,15 @@ typedef struct {
     BOOL finished;
 } DOSThreadData;
 
+// --- Global/File-scope state for blinking ---
+// Target frequency is 3.745 Hz (0.267 seconds per cycle)
+// Period for state change is 0.267 / 2 = 0.1337 seconds
+// 60 FPS update rate (1/60s = 0.01666...s)
+// Number of frames per state change: 0.1337 / (1/60) ~= 8.02 frames
+// We will use 8 frames for a near-perfect blink rate.
+static const int FRAMES_PER_BLINK_HALF_CYCLE = 8;
+static int blinkFrameCounter = 0; // Tracks frames since last blink state change
+
 /**
  * @brief AppDelegate
  * Manages the application's lifecycle, window, and render loop.
@@ -571,8 +580,32 @@ void* dosThreadFunction(void *arg) {
  * @brief This is our main render loop, called by the NSTimer.
  */
 - (void)renderAndUpdate:(NSTimer *)timer {
+    // Store current dimensions before rendering
+    const int oldWidth = imageBuffer.width;
+    const int oldHeight = imageBuffer.height;
+
+    // BLINK IMPLEMENTATION
+    blinkFrameCounter++;
+    // Check if it's time to toggle the blink state
+    if (blinkFrameCounter >= FRAMES_PER_BLINK_HALF_CYCLE) {
+        // Toggle pccore.blink (0 to 1, or 1 to 0)
+        pccore.blink = 1 - pccore.blink; // Invert the value
+        // Reset counter
+        blinkFrameCounter = 0;
+        // The frequency is: (1 / FRAMES_PER_BLINK_HALF_CYCLE) * (60 FPS) / 2
+        // (1 / 8) * 60 / 2 = 7.5 / 2 = 3.75 Hz
+    }
+
     // Call your C render function
     render(&imageBuffer, pccore);
+
+    if (imageBuffer.width != oldWidth || imageBuffer.height != oldHeight) {
+        printf("Detected mode change: %dx%d -> %dx%d\n", 
+               oldWidth, oldHeight, imageBuffer.width, imageBuffer.height);
+        
+        // Call the method that recalculates window size and updates the view
+        [self setScale:currentScale];
+    }
 
     // Safety check
     if (imageBuffer.width == 0 || imageBuffer.height == 0) {

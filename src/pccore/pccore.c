@@ -42,6 +42,11 @@ void render(IMAGE* image, PCCORE pccore) {
             render640x200x1(image, pccore);
             break;
 
+        case CGA80x25:
+            // Call the specific function for 640x200x1 mode
+            render80x25(image, pccore);
+            break;
+
         case CGA40x25:
             // Call the specific function for 640x200x1 mode
             render40x25(image, pccore);
