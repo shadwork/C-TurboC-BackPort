@@ -42,6 +42,11 @@ void render(IMAGE* image, PCCORE pccore) {
             render640x200x1(image, pccore);
             break;
 
+        case CGA40x25:
+            // Call the specific function for 640x200x1 mode
+            render40x25(image, pccore);
+            break;
+
         default:
             // Handle unknown or unsupported mode
             // We can clear the image or just log an error.

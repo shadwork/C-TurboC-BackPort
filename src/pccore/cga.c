@@ -361,3 +361,115 @@ void render320x200x2g(IMAGE* image, PCCORE pccore) {
         }
     }
 }
+
+/**
+ * @brief Renders the 40x25 B/W text mode (Mode 0).
+ *
+ * In CGA text modes, video memory is organized as character/attribute pairs.
+ * Each character cell occupies 2 bytes:
+ * - Byte 0: ASCII character code (index into font table)
+ * - Byte 1: Attribute byte (foreground color in bits 0-3, background in bits 4-6, blink in bit 7)
+ *
+ * The screen layout is 40 columns × 25 rows = 1000 characters = 2000 bytes.
+ * Each character is rendered using the 8x8 font, resulting in 320x200 pixels.
+ *
+ * The Color/B&W selection is controlled by bit 2 (0x04) of the Color Select Register (0x3D9):
+ * - Bit 2 clear (color burst enabled): Use full 16-color CGA palette
+ * - Bit 2 set (color burst disabled): Use grayscale palette (B/W composite mode)
+ *
+ * @param image  Pointer to the output image buffer.
+ * @param pccore A const pointer to the PC core state.
+ */
+void render40x25(IMAGE* image, PCCORE pccore) {
+    const int COLS = 40;
+    const int ROWS = 25;
+    const int CHAR_WIDTH = 8;
+    const int CHAR_HEIGHT = 8;
+    const int border_size = 16;
+    
+    const int active_width = COLS * CHAR_WIDTH;   // 320 pixels
+    const int active_height = ROWS * CHAR_HEIGHT; // 200 pixels
+    const int final_width = active_width + (border_size * 2);
+    const int final_height = active_height + (border_size * 2);
+    
+    // Pointer to video RAM (starts at 0xB8000)
+    unsigned char* vram = &pccore.memory[CGA_VIDEO_RAM_START];
+    
+    // Pointer to output buffer
+    unsigned char* out_pixel = image->raw;
+    
+    // Get the color register
+    unsigned char color_reg = pccore.port[CGA_COLOR_REGISTER_PORT];
+    
+    // Check bit 2 (0x04) - Color Burst Enable/Disable
+    // 0 = Color burst enabled (use color palette)
+    // 1 = Color burst disabled (use grayscale palette)
+    int use_grayscale = (color_reg & 0x04) ? 0 : 1;
+    
+    // Select the appropriate palette
+    const RgbColor* palette = use_grayscale ? g_cgaGrayPalette : g_cga16ColorPalette;
+    
+    // Get border color (bits 0-3)
+    int border_color_index = color_reg & 0x0F;
+    const RgbColor* border_color = &palette[border_color_index];
+    
+    // Set image dimensions
+    image->width = final_width;
+    image->height = final_height;
+    image->aspect_ratio = 1.2f; // CGA aspect ratio
+    
+    // Render the image with border
+    for (int y = 0; y < final_height; y++) {
+        for (int x = 0; x < final_width; x++) {
+            // Check if we're in the border area
+            if (y < border_size || y >= (active_height + border_size) ||
+                x < border_size || x >= (active_width + border_size)) {
+                // Draw border pixel
+                *out_pixel++ = border_color->r;
+                *out_pixel++ = border_color->g;
+                *out_pixel++ = border_color->b;
+            } else {
+                // Calculate position within active area
+                int cga_y = y - border_size;
+                int cga_x = x - border_size;
+                
+                // Calculate which character cell we're in
+                int char_col = cga_x / CHAR_WIDTH;
+                int char_row = cga_y / CHAR_HEIGHT;
+                
+                // Calculate position within the character (0-7 for both x and y)
+                int pixel_x_in_char = cga_x % CHAR_WIDTH;
+                int pixel_y_in_char = cga_y % CHAR_HEIGHT;
+                
+                // Calculate offset in video RAM (2 bytes per character)
+                int vram_offset = (char_row * COLS + char_col) * 2;
+                
+                // Get character code and attribute
+                unsigned char char_code = vram[vram_offset];
+                unsigned char attribute = vram[vram_offset + 1];
+                
+                // Extract colors from attribute byte
+                int fg_color_index = attribute & 0x0F;        // Bits 0-3: Foreground
+                int bg_color_index = (attribute >> 4) & 0x07; // Bits 4-6: Background
+                // Note: Bit 7 is blink, but we'll ignore it for static rendering
+                
+                // Get the font bitmap for this character and row
+                unsigned char font_byte = CGA_FONT_BOLD[char_code * 8 + pixel_y_in_char];
+                
+                // Check if this pixel is set in the font (MSB is leftmost pixel)
+                int bit_shift = 7 - pixel_x_in_char;
+                int pixel_set = (font_byte >> bit_shift) & 0x01;
+                
+                // Select foreground or background color
+                const RgbColor* pixel_color = pixel_set ? 
+                    &palette[fg_color_index] : 
+                    &palette[bg_color_index];
+                
+                // Write the pixel to the output buffer
+                *out_pixel++ = pixel_color->r;
+                *out_pixel++ = pixel_color->g;
+                *out_pixel++ = pixel_color->b;
+            }
+        }
+    }
+}

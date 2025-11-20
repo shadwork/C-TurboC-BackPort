@@ -28,7 +28,8 @@ int dos_main(int argc, char *argv[])
     cga_mem[0] = 255;
 
     regs.h.ah = 0;
-    regs.h.al = 5;
+
+    regs.h.al = 0;
     int86(0x10,&regs,&regs);
 
     outportb(0x3d9,0);

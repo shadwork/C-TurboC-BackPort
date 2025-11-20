@@ -11,7 +11,7 @@ TARGET = pccore_app
 
 # Source files
 # We now have two source files to compile and link
-SRC = wrapper/macos.m wrapper/macos_keyboard.m pccore/pccore.c pccore/cga.c turboc/dos.c turboc/bios.c turboc/int10.c dosapp.c
+SRC = wrapper/macos.m wrapper/macos_keyboard.m pccore/pccore.c pccore/cga.c pccore/cgafont.c turboc/dos.c turboc/bios.c turboc/int10.c dosapp.c
 
 # Header files (for dependency tracking)
 HEADERS = pccore/pccore.h

@@ -33,6 +33,15 @@ void setVideoMode(int mode){
     memset(&pccore.memory[CGA_VIDEO_RAM_START],0,CGA_BANK1_OFFSET*2);
     switch (mode)
     {
+    case 0:
+        pccore.mode = CGA40x25;
+        // its grey by default
+        pccore.port[CGA_MODE_CONTROL_PORT] = 0x04; 
+        break;    
+    case 1:
+        pccore.mode = CGA40x25;
+        pccore.port[CGA_MODE_CONTROL_PORT] = 0x00; 
+        break;             
     case 4:
         pccore.mode = CGA320x200x2;
         break;
