@@ -3,12 +3,13 @@
 #include "../pccore/pccore.h"
 #include "../pccore/cga.h"
 #include "macos_keyboard.h"
-#include "../dosapp.h"
 #include <string.h> // For memset
 #include <pthread.h> // For threading
 #include <AppKit/NSEvent.h> // For key codes
 
-// --- Forward Declaration ---
+extern int dos_main(int argc, char *argv[]);
+
+// --- Forward Declaration
 @class PixelRenderView;
 
 // Structure to pass data to DOS thread
@@ -583,6 +584,13 @@ void* dosThreadFunction(void *arg) {
     // Store current dimensions before rendering
     const int oldWidth = imageBuffer.width;
     const int oldHeight = imageBuffer.height;
+
+    // --- UPDATE PCCORE.TIME WITH SYSTEM MILLISECONDS ---
+    struct timeval te; 
+    gettimeofday(&te, NULL); // get current time
+    // Calculate milliseconds:
+    // (seconds * 1000) + (microseconds / 1000)
+    pccore.time = (long long)te.tv_sec * 1000LL + te.tv_usec / 1000;
 
     // BLINK IMPLEMENTATION
     blinkFrameCounter++;

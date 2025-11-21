@@ -34,8 +34,11 @@ struct	REGPACK
 	};
 
 int int86(int intno, union REGS *inregs, union REGS *outregs);
+
 void outportb(int portid, char value);
 
 void* MK_FP(int seg, int ofs);
+
+void delay(int milliseconds);
 
 #endif /* DOS_H */

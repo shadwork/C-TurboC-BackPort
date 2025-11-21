@@ -72,8 +72,11 @@ typedef struct {
     // Last key pressed or keyboard state
     int key;
 
-    // Blinking status for cursor and text
+    // Blinking status for cursor
     int blink;    
+
+    // Time in millisec
+    long long time;       
 } PCCORE;
 
 // --- Function Prototypes ---

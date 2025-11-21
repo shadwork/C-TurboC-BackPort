@@ -160,7 +160,7 @@ void render640x200x1(IMAGE* image, PCCORE pccore) {
     // 1. Set the output image dimensions
     image->width = final_width;
     image->height = final_height;
-    image->aspect_ratio = (float)final_width / (float)final_height;
+    image->aspect_ratio = 2.4f;
 
     // 2. Determine palette for 640x200 mode
     // Bits 0-3 set the border AND the foreground color.
@@ -562,7 +562,7 @@ void render80x25(IMAGE* image, PCCORE pccore) {
     // Set image dimensions
     image->width = final_width;
     image->height = final_height;
-    image->aspect_ratio = (float)final_width / (float)final_height; // 672/232 = ~2.9, but active area is 640/200 = 3.2
+    image->aspect_ratio = 2.4f;
     
     // --- Rendering Loop ---
     for (int y = 0; y < final_height; y++) {

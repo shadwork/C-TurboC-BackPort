@@ -24,3 +24,14 @@ void* MK_FP(int seg, int ofs)
     unsigned long linear_address = (unsigned long)(seg * 16) + (unsigned long)ofs;
     return (void*)&pccore.memory[linear_address];
 }
+
+void delay(int milliseconds) {
+    if (milliseconds == 0) {
+        return;
+    }
+    long long end_time = pccore.time + milliseconds;
+
+    while ((end_time - pccore.time) > 0) {
+
+    }
+}
