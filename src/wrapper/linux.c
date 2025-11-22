@@ -1,495 +1,463 @@
-#include <X11/Xlib.h>
-#include <X11/Xutil.h>
-#include <X11/keysym.h>
+#include <gtk/gtk.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
-#include <unistd.h>
 #include <sys/time.h>
+#include <unistd.h>
 
 #include "../pccore/pccore.h"
 #include "../pccore/cga.h"
 #include "linux_keyboard.h"
-#include "../dosapp.h"
 
-// --- Constants ---
-#define WINDOW_TITLE "PC Core Emulator"
-#define TARGET_FPS 60
-#define FRAME_TIME_US (1000000 / TARGET_FPS)
+extern int dos_main(int argc, char *argv[]);
 
-// --- Global Variables ---
-Display *g_display = NULL;
-Window g_window = 0;
-GC g_gc = 0;
-XImage *g_ximage = NULL;
-IMAGE g_imageBuffer = {0};
-Atom g_wmDeleteWindow;
+// --- Global state ---
+static GtkWidget *g_window = NULL;
+static GtkWidget *g_drawing_area = NULL;
+static IMAGE g_imageBuffer = {0};
+static int g_currentScale = 2;
+static unsigned char *g_scaledBuffer = NULL;
+static size_t g_scaledBufferSize = 0;
 
-int g_baseWidth = 0;
-int g_baseHeight = 0;
-int g_running = 1;
+// DOS thread
+static pthread_t g_dosThread;
+static volatile int g_dosFinished = 0;
+static int g_dosResult = 0;
 
-// DOS Thread Data
-typedef struct {
-    int argc;
-    char **argv;
-    int result;
-    int finished;
-} DOSThreadData;
+// Blink state
+static const int FRAMES_PER_BLINK_HALF_CYCLE = 8;
+static int g_blinkFrameCounter = 0;
 
-pthread_t g_dosThread;
-DOSThreadData *g_pDOSData = NULL;
+// Command line args for DOS thread
+static int g_argc = 0;
+static char **g_argv = NULL;
 
-// --- Forward Declarations ---
-void InitializePCCore(void);
-void CreateAppWindow(int argc, char **argv);
-void RenderAndUpdate(void);
-void HandleEvents(void);
-void CleanupResources(void);
-void* DOSThreadFunction(void *arg);
-void StartDOSThread(int argc, char **argv);
-long GetCurrentTimeMicros(void);
+// Menu items for checkmarks
+static GtkWidget *g_scale_items[4] = {NULL, NULL, NULL, NULL};
 
-/**
- * @brief Get current time in microseconds
- */
-long GetCurrentTimeMicros(void) {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return tv.tv_sec * 1000000L + tv.tv_usec;
-}
+// --- Forward declarations ---
+void initialize_pccore(void);
+void render_frame(void);
+void scale_pixel_buffer(void);
+void set_window_scale(int scale);
+void* dos_thread_function(void* arg);
+gboolean on_draw(GtkWidget *widget, cairo_t *cr, gpointer data);
+gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data);
+gboolean on_key_release(GtkWidget *widget, GdkEventKey *event, gpointer data);
+gboolean on_timer(gpointer data);
+void on_scale_activate(GtkMenuItem *item, gpointer data);
+void on_quit_activate(GtkMenuItem *item, gpointer data);
 
 /**
- * @brief DOS Thread Function
+ * @brief DOS thread function
  */
-void* DOSThreadFunction(void *arg) {
-    DOSThreadData *data = (DOSThreadData *)arg;
-    
-    printf("DOS thread started with %d arguments\n", data->argc);
+void* dos_thread_function(void* arg) {
+    printf("DOS thread started with %d arguments\n", g_argc);
     
     // Call the DOS main function
-    data->result = dos_main(data->argc, data->argv);
+    g_dosResult = dos_main(g_argc, g_argv);
     
-    printf("DOS thread finished with result: %d\n", data->result);
+    printf("DOS thread finished with result: %d\n", g_dosResult);
     
     // Mark as finished
-    __atomic_store_n(&data->finished, 1, __ATOMIC_SEQ_CST);
+    g_dosFinished = 1;
     
     return NULL;
 }
 
 /**
- * @brief Start the DOS thread
+ * @brief Initialize the PCCORE struct
  */
-void StartDOSThread(int argc, char **argv) {
-    // Allocate thread data
-    g_pDOSData = (DOSThreadData *)malloc(sizeof(DOSThreadData));
-    if (!g_pDOSData) {
-        fprintf(stderr, "Failed to allocate DOS thread data\n");
+void initialize_pccore(void) {
+    // Zero out the entire pccore state
+    memset(&pccore, 0, sizeof(PCCORE));
+
+    // Set the requested video mode
+    pccore.mode = CGA320x200x2;
+
+    // Initialize key to 0 (meaning "no key pressed")
+    pccore.key = 0;
+
+    // Set the CGA Color Register (Port 0x3D9)
+    pccore.port[CGA_COLOR_REGISTER_PORT] = 0x20 | 0x10 | 0x01; // 0x31
+
+    // Run one initial render to get image dimensions
+    render(&g_imageBuffer, pccore);
+}
+
+/**
+ * @brief Scale the pixel buffer using nearest-neighbor
+ */
+void scale_pixel_buffer(void) {
+    if (g_imageBuffer.raw == NULL || g_imageBuffer.width == 0 || g_imageBuffer.height == 0) {
         return;
     }
     
-    g_pDOSData->finished = 0;
-    g_pDOSData->result = 0;
-    g_pDOSData->argc = argc;
+    int srcWidth = g_imageBuffer.width;
+    int srcHeight = g_imageBuffer.height;
+    int dstWidth = srcWidth * g_currentScale;
+    int dstHeight = srcHeight * g_currentScale;
     
-    // Allocate and copy argv
-    g_pDOSData->argv = (char **)malloc(sizeof(char *) * (argc + 1));
-    for (int i = 0; i < argc; i++) {
-        g_pDOSData->argv[i] = strdup(argv[i]);
-    }
-    g_pDOSData->argv[argc] = NULL;
+    size_t requiredSize = dstWidth * dstHeight * 4; // RGBA for Cairo
     
-    // Create the thread
-    int result = pthread_create(&g_dosThread, NULL, DOSThreadFunction, g_pDOSData);
-    if (result != 0) {
-        fprintf(stderr, "Failed to create DOS thread: %d\n", result);
-        for (int i = 0; i < argc; i++) {
-            free(g_pDOSData->argv[i]);
+    // Allocate or reallocate buffer if needed
+    if (g_scaledBuffer == NULL || g_scaledBufferSize != requiredSize) {
+        if (g_scaledBuffer) {
+            free(g_scaledBuffer);
         }
-        free(g_pDOSData->argv);
-        free(g_pDOSData);
-        g_pDOSData = NULL;
+        g_scaledBuffer = (unsigned char *)malloc(requiredSize);
+        g_scaledBufferSize = requiredSize;
+    }
+    
+    unsigned char *src = g_imageBuffer.raw;
+    
+    // Fast nearest-neighbor scaling (convert RGB to RGBA)
+    for (int dstY = 0; dstY < dstHeight; dstY++) {
+        int srcY = dstY / g_currentScale;
+        for (int dstX = 0; dstX < dstWidth; dstX++) {
+            int srcX = dstX / g_currentScale;
+            
+            int srcIndex = (srcY * srcWidth + srcX) * 3;
+            int dstIndex = (dstY * dstWidth + dstX) * 4;
+            
+            // Cairo uses BGRA format in native byte order
+            g_scaledBuffer[dstIndex + 0] = src[srcIndex + 2]; // B
+            g_scaledBuffer[dstIndex + 1] = src[srcIndex + 1]; // G
+            g_scaledBuffer[dstIndex + 2] = src[srcIndex + 0]; // R
+            g_scaledBuffer[dstIndex + 3] = 255;                // A
+        }
+    }
+}
+
+/**
+ * @brief Render a single frame
+ */
+void render_frame(void) {
+    // Store current dimensions before rendering
+    const int oldWidth = g_imageBuffer.width;
+    const int oldHeight = g_imageBuffer.height;
+
+    // Update pccore.time with system milliseconds
+    struct timeval te;
+    gettimeofday(&te, NULL);
+    pccore.time = (long long)te.tv_sec * 1000LL + te.tv_usec / 1000;
+
+    // Blink implementation
+    g_blinkFrameCounter++;
+    if (g_blinkFrameCounter >= FRAMES_PER_BLINK_HALF_CYCLE) {
+        pccore.blink = 1 - pccore.blink;
+        g_blinkFrameCounter = 0;
+    }
+
+    // Call the render function
+    render(&g_imageBuffer, pccore);
+
+    // Check if mode changed
+    if (g_imageBuffer.width != oldWidth || g_imageBuffer.height != oldHeight) {
+        printf("Detected mode change: %dx%d -> %dx%d\n", 
+               oldWidth, oldHeight, g_imageBuffer.width, g_imageBuffer.height);
+        set_window_scale(g_currentScale);
+    }
+
+    // Trigger window redraw
+    if (g_drawing_area) {
+        gtk_widget_queue_draw(g_drawing_area);
+    }
+}
+
+/**
+ * @brief Set window scale
+ */
+void set_window_scale(int scale) {
+    if (scale < 1 || scale > 4) {
+        return;
+    }
+    
+    g_currentScale = scale;
+    
+    // Update menu checkmarks
+    for (int i = 0; i < 4; i++) {
+        if (g_scale_items[i]) {
+            gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(g_scale_items[i]), 
+                                          (i + 1) == scale);
+        }
+    }
+    
+    if (g_window && g_imageBuffer.width > 0 && g_imageBuffer.height > 0) {
+        int newWidth = g_imageBuffer.width * scale;
+        int newHeight = g_imageBuffer.height * scale;
+        
+        gtk_window_resize(GTK_WINDOW(g_window), newWidth, newHeight);
+        gtk_widget_set_size_request(g_drawing_area, newWidth, newHeight);
+        
+        printf("Scale set to %dx (%dx%d)\n", scale, newWidth, newHeight);
+    }
+}
+
+/**
+ * @brief Drawing callback
+ */
+gboolean on_draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
+    (void)widget;
+    (void)data;
+    
+    if (g_imageBuffer.width == 0 || g_imageBuffer.height == 0) {
+        return FALSE;
+    }
+    
+    // Scale the pixel buffer
+    scale_pixel_buffer();
+    
+    if (g_scaledBuffer == NULL) {
+        return FALSE;
+    }
+    
+    int dstWidth = g_imageBuffer.width * g_currentScale;
+    int dstHeight = g_imageBuffer.height * g_currentScale;
+    
+    // Create Cairo surface from scaled buffer
+    cairo_surface_t *surface = cairo_image_surface_create_for_data(
+        g_scaledBuffer,
+        CAIRO_FORMAT_RGB24,
+        dstWidth,
+        dstHeight,
+        dstWidth * 4
+    );
+    
+    // Disable interpolation for crisp pixels
+    cairo_pattern_t *pattern = cairo_pattern_create_for_surface(surface);
+    cairo_pattern_set_filter(pattern, CAIRO_FILTER_NEAREST);
+    
+    // Draw the surface
+    cairo_set_source(cr, pattern);
+    cairo_paint(cr);
+    
+    // Cleanup
+    cairo_pattern_destroy(pattern);
+    cairo_surface_destroy(surface);
+    
+    return FALSE;
+}
+
+/**
+ * @brief Key press callback
+ */
+gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data) {
+    (void)widget;
+    (void)data;
+    
+    // Ignore key repeats
+    if (event->is_modifier) {
+        return FALSE;
+    }
+    
+    int scancode = get_scancode(event);
+    if (scancode != 0) {
+        pccore.key = scancode;
+        pccore.memory[BDA_KBD_STATUS_1] = get_statuscode(event);
+        printf("Key pressed: 0x%x 0x%x\n", pccore.key, pccore.memory[BDA_KBD_STATUS_1]);
+    }
+    
+    return FALSE;
+}
+
+/**
+ * @brief Key release callback
+ */
+gboolean on_key_release(GtkWidget *widget, GdkEventKey *event, gpointer data) {
+    (void)widget;
+    (void)data;
+    
+    int scancode = get_scancode(event);
+    if (pccore.key == scancode) {
+        pccore.key = 0;
+        printf("Key released\n");
+    }
+    pccore.memory[BDA_KBD_STATUS_1] = get_statuscode(event);
+    
+    return FALSE;
+}
+
+/**
+ * @brief Timer callback for 60 FPS rendering
+ */
+gboolean on_timer(gpointer data) {
+    (void)data;
+    render_frame();
+    return TRUE; // Continue timer
+}
+
+/**
+ * @brief Scale menu item callback
+ */
+void on_scale_activate(GtkMenuItem *item, gpointer data) {
+    int scale = GPOINTER_TO_INT(data);
+    set_window_scale(scale);
+}
+
+/**
+ * @brief Quit menu item callback
+ */
+void on_quit_activate(GtkMenuItem *item, gpointer data) {
+    (void)item;
+    (void)data;
+    gtk_main_quit();
+}
+
+/**
+ * @brief Create menu bar
+ */
+GtkWidget* create_menu_bar(void) {
+    GtkWidget *menu_bar = gtk_menu_bar_new();
+    
+    // File menu
+    GtkWidget *file_menu = gtk_menu_new();
+    GtkWidget *file_item = gtk_menu_item_new_with_label("File");
+    GtkWidget *quit_item = gtk_menu_item_new_with_label("Quit");
+    
+    g_signal_connect(quit_item, "activate", G_CALLBACK(on_quit_activate), NULL);
+    
+    gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), quit_item);
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(file_item), file_menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu_bar), file_item);
+    
+    // View menu
+    GtkWidget *view_menu = gtk_menu_new();
+    GtkWidget *view_item = gtk_menu_item_new_with_label("View");
+    
+    GSList *group = NULL;
+    const char *scale_labels[] = {"1x Scale", "2x Scale", "3x Scale", "4x Scale"};
+    
+    for (int i = 0; i < 4; i++) {
+        g_scale_items[i] = gtk_radio_menu_item_new_with_label(group, scale_labels[i]);
+        group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(g_scale_items[i]));
+        
+        g_signal_connect(g_scale_items[i], "activate", 
+                        G_CALLBACK(on_scale_activate), 
+                        GINT_TO_POINTER(i + 1));
+        
+        gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), g_scale_items[i]);
+        
+        // Set 2x as default
+        if (i == 1) {
+            gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(g_scale_items[i]), TRUE);
+        }
+    }
+    
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(view_item), view_menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu_bar), view_item);
+    
+    return menu_bar;
+}
+
+/**
+ * @brief Window destroy callback
+ */
+void on_window_destroy(GtkWidget *widget, gpointer data) {
+    (void)widget;
+    (void)data;
+    gtk_main_quit();
+}
+
+/**
+ * @brief Application activation callback
+ */
+void on_activate(GtkApplication *app, gpointer user_data) {
+    (void)user_data;
+    
+    // Initialize PC Core
+    initialize_pccore();
+    
+    // Create window
+    g_window = gtk_application_window_new(app);
+    gtk_window_set_title(GTK_WINDOW(g_window), "PC Core Emulator");
+    gtk_window_set_resizable(GTK_WINDOW(g_window), FALSE);
+    
+    g_signal_connect(g_window, "destroy", G_CALLBACK(on_window_destroy), NULL);
+    
+    // Create vertical box for menu and drawing area
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_container_add(GTK_CONTAINER(g_window), vbox);
+    
+    // Create menu bar
+    GtkWidget *menu_bar = create_menu_bar();
+    gtk_box_pack_start(GTK_BOX(vbox), menu_bar, FALSE, FALSE, 0);
+    
+    // Create drawing area
+    int baseWidth = g_imageBuffer.width * g_currentScale;
+    int baseHeight = g_imageBuffer.height * g_currentScale;
+    
+    g_drawing_area = gtk_drawing_area_new();
+    gtk_widget_set_size_request(g_drawing_area, baseWidth, baseHeight);
+    
+    g_signal_connect(g_drawing_area, "draw", G_CALLBACK(on_draw), NULL);
+    
+    gtk_box_pack_start(GTK_BOX(vbox), g_drawing_area, TRUE, TRUE, 0);
+    
+    // Enable keyboard events
+    gtk_widget_set_can_focus(g_drawing_area, TRUE);
+    gtk_widget_add_events(g_drawing_area, GDK_KEY_PRESS_MASK | GDK_KEY_RELEASE_MASK);
+    
+    g_signal_connect(g_window, "key-press-event", G_CALLBACK(on_key_press), NULL);
+    g_signal_connect(g_window, "key-release-event", G_CALLBACK(on_key_release), NULL);
+    
+    // Show all widgets
+    gtk_widget_show_all(g_window);
+    
+    // Focus the drawing area for keyboard input
+    gtk_widget_grab_focus(g_drawing_area);
+    
+    // Start DOS thread
+    int result = pthread_create(&g_dosThread, NULL, dos_thread_function, NULL);
+    if (result != 0) {
+        fprintf(stderr, "Error creating DOS thread: %d\n", result);
     } else {
         printf("DOS thread created successfully\n");
     }
-}
-
-/**
- * @brief Initialize PCCORE struct
- */
-void InitializePCCore(void) {
-    // Zero out the entire pccore state
-    memset(&pccore, 0, sizeof(PCCORE));
     
-    // Set the requested video mode
-    pccore.mode = CGA320x200x2;
-    
-    // Initialize key to 0 (meaning "no key pressed")
-    pccore.key = 0;
-    
-    // Set the CGA Color Register (Port 0x3D9)
-    pccore.port[CGA_COLOR_REGISTER_PORT] = 0x20 | 0x10 | 0x01; // 0x31
-    
-    // Run one initial render to get image dimensions
-    render(&g_imageBuffer, pccore);
-    
-    g_baseWidth = g_imageBuffer.width;
-    g_baseHeight = g_imageBuffer.height;
-}
-
-/**
- * @brief Create the application window
- */
-void CreateAppWindow(int argc, char **argv) {
-    // Open connection to X server
-    g_display = XOpenDisplay(NULL);
-    if (!g_display) {
-        fprintf(stderr, "Cannot open X display\n");
-        exit(1);
-    }
-    
-    int screen = DefaultScreen(g_display);
-    Window root = RootWindow(g_display, screen);
-    
-    // Calculate window size (2x scale by default)
-    int defaultScale = 2;
-    int windowWidth = g_baseWidth * defaultScale;
-    int windowHeight = g_baseHeight * defaultScale;
-    
-    // Set up window attributes
-    XSetWindowAttributes attrs;
-    attrs.background_pixel = BlackPixel(g_display, screen);
-    attrs.event_mask = ExposureMask | KeyPressMask | KeyReleaseMask | 
-                       StructureNotifyMask | FocusChangeMask;
-    
-    // Create the window
-    g_window = XCreateWindow(
-        g_display, root,
-        0, 0, windowWidth, windowHeight,
-        0,
-        DefaultDepth(g_display, screen),
-        InputOutput,
-        DefaultVisual(g_display, screen),
-        CWBackPixel | CWEventMask,
-        &attrs
-    );
-    
-    if (!g_window) {
-        fprintf(stderr, "Cannot create window\n");
-        XCloseDisplay(g_display);
-        exit(1);
-    }
-    
-    // Set window title
-    XStoreName(g_display, g_window, WINDOW_TITLE);
-    
-    // Set size hints (minimum size)
-    XSizeHints *sizeHints = XAllocSizeHints();
-    if (sizeHints) {
-        sizeHints->flags = PMinSize;
-        sizeHints->min_width = g_baseWidth;
-        sizeHints->min_height = g_baseHeight;
-        XSetWMNormalHints(g_display, g_window, sizeHints);
-        XFree(sizeHints);
-    }
-    
-    // Set WM_DELETE_WINDOW protocol
-    g_wmDeleteWindow = XInternAtom(g_display, "WM_DELETE_WINDOW", False);
-    XSetWMProtocols(g_display, g_window, &g_wmDeleteWindow, 1);
-    
-    // Create graphics context
-    g_gc = XCreateGC(g_display, g_window, 0, NULL);
-    
-    // Map (show) the window
-    XMapWindow(g_display, g_window);
-    XFlush(g_display);
-    
-    // Wait for window to be mapped
-    XEvent event;
-    do {
-        XNextEvent(g_display, &event);
-    } while (event.type != MapNotify);
-}
-
-/**
- * @brief Render and update the display
- */
-void RenderAndUpdate(void) {
-    // Call the C render function
-    render(&g_imageBuffer, pccore);
-    
-    if (g_imageBuffer.width == 0 || g_imageBuffer.height == 0) {
-        return;
-    }
-    
-    // Get current window size
-    XWindowAttributes windowAttrs;
-    XGetWindowAttributes(g_display, g_window, &windowAttrs);
-    int windowWidth = windowAttrs.width;
-    int windowHeight = windowAttrs.height;
-    
-    // Create or recreate XImage if needed
-    if (!g_ximage || 
-        g_ximage->width != g_imageBuffer.width || 
-        g_ximage->height != g_imageBuffer.height) {
-        
-        if (g_ximage) {
-            XDestroyImage(g_ximage);
-        }
-        
-        // Create XImage
-        // Note: XImage will use the raw buffer directly
-        // We need to convert RGB to BGR for X11
-        int screen = DefaultScreen(g_display);
-        Visual *visual = DefaultVisual(g_display, screen);
-        int depth = DefaultDepth(g_display, screen);
-        
-        // Allocate buffer for BGR format
-        char *imageData = (char *)malloc(g_imageBuffer.width * g_imageBuffer.height * 4);
-        
-        g_ximage = XCreateImage(
-            g_display,
-            visual,
-            depth,
-            ZPixmap,
-            0,
-            imageData,
-            g_imageBuffer.width,
-            g_imageBuffer.height,
-            32,
-            0
-        );
-        
-        if (!g_ximage) {
-            fprintf(stderr, "Failed to create XImage\n");
-            free(imageData);
-            return;
-        }
-    }
-    
-    // Convert RGB to BGRA format for X11
-    unsigned char *src = g_imageBuffer.raw;
-    unsigned char *dst = (unsigned char *)g_ximage->data;
-    
-    for (int i = 0; i < g_imageBuffer.width * g_imageBuffer.height; i++) {
-        dst[i * 4 + 0] = src[i * 3 + 2]; // B
-        dst[i * 4 + 1] = src[i * 3 + 1]; // G
-        dst[i * 4 + 2] = src[i * 3 + 0]; // R
-        dst[i * 4 + 3] = 0xFF;            // A
-    }
-    
-    // Scale and draw the image to fill the window
-    // Using XPutImage with scaling via server-side scaling if available,
-    // otherwise we need to scale manually or use extension
-    
-    // For simplicity, we'll use XPutImage and let the X server handle it
-    // For better performance, consider using XRender or similar extensions
-    
-    // Calculate scaling to maintain aspect ratio
-    float scaleX = (float)windowWidth / g_imageBuffer.width;
-    float scaleY = (float)windowHeight / g_imageBuffer.height;
-    float scale = (scaleX < scaleY) ? scaleX : scaleY;
-    
-    int scaledWidth = (int)(g_imageBuffer.width * scale);
-    int scaledHeight = (int)(g_imageBuffer.height * scale);
-    
-    // Center the image
-    int offsetX = (windowWidth - scaledWidth) / 2;
-    int offsetY = (windowHeight - scaledHeight) / 2;
-    
-    // Clear background
-    XSetForeground(g_display, g_gc, BlackPixel(g_display, DefaultScreen(g_display)));
-    XFillRectangle(g_display, g_window, g_gc, 0, 0, windowWidth, windowHeight);
-    
-    // Draw scaled image
-    // Note: Basic XPutImage doesn't support scaling, so we use it at original size
-    // For production, you'd want to use XRender or do software scaling
-    if (scaledWidth == g_imageBuffer.width && scaledHeight == g_imageBuffer.height) {
-        // No scaling needed
-        XPutImage(g_display, g_window, g_gc, g_ximage,
-                  0, 0, offsetX, offsetY,
-                  g_imageBuffer.width, g_imageBuffer.height);
-    } else {
-        // Simple nearest-neighbor scaling
-        // For better quality, consider using XRender extension
-        XPutImage(g_display, g_window, g_gc, g_ximage,
-                  0, 0, offsetX, offsetY,
-                  g_imageBuffer.width, g_imageBuffer.height);
-    }
-    
-    XFlush(g_display);
-}
-
-/**
- * @brief Handle X11 events
- */
-void HandleEvents(void) {
-    XEvent event;
-    
-    while (XPending(g_display) > 0) {
-        XNextEvent(g_display, &event);
-        
-        switch (event.type) {
-            case Expose:
-                if (event.xexpose.count == 0) {
-                    RenderAndUpdate();
-                }
-                break;
-                
-            case KeyPress: {
-                KeySym keysym = XLookupKeysym(&event.xkey, 0);
-                unsigned char scancode = get_scancode(keysym);
-                if (scancode != 0) {
-                    pccore.key = scancode;
-                    printf("Key pressed: 0x%x (keysym: 0x%lx)\n", scancode, keysym);
-                }
-                break;
-            }
-            
-            case KeyRelease: {
-                // Check for key repeat (X11 sends KeyRelease+KeyPress for repeats)
-                if (XPending(g_display) > 0) {
-                    XEvent nextEvent;
-                    XPeekEvent(g_display, &nextEvent);
-                    
-                    if (nextEvent.type == KeyPress &&
-                        nextEvent.xkey.time == event.xkey.time &&
-                        nextEvent.xkey.keycode == event.xkey.keycode) {
-                        // This is a key repeat, ignore the release
-                        break;
-                    }
-                }
-                
-                KeySym keysym = XLookupKeysym(&event.xkey, 0);
-                unsigned char scancode = get_scancode(keysym);
-                if (scancode != 0 && pccore.key == scancode) {
-                    pccore.key = 0;
-                    printf("Key released\n");
-                }
-                break;
-            }
-            
-            case ConfigureNotify:
-                // Window was resized
-                RenderAndUpdate();
-                break;
-                
-            case ClientMessage:
-                if ((Atom)event.xclient.data.l[0] == g_wmDeleteWindow) {
-                    g_running = 0;
-                }
-                break;
-                
-            case FocusIn:
-                // Window gained focus
-                break;
-                
-            case FocusOut:
-                // Window lost focus - release all keys
-                pccore.key = 0;
-                break;
-        }
-    }
-}
-
-/**
- * @brief Cleanup resources
- */
-void CleanupResources(void) {
-    // Wait for DOS thread to finish
-    if (g_pDOSData) {
-        int finished = __atomic_load_n(&g_pDOSData->finished, __ATOMIC_SEQ_CST);
-        if (!finished) {
-            printf("Waiting for DOS thread to finish...\n");
-            pthread_join(g_dosThread, NULL);
-        } else {
-            pthread_join(g_dosThread, NULL);
-        }
-        
-        // Free allocated memory
-        for (int i = 0; i < g_pDOSData->argc; i++) {
-            free(g_pDOSData->argv[i]);
-        }
-        free(g_pDOSData->argv);
-        
-        printf("DOS execution completed with code: %d\n", g_pDOSData->result);
-        
-        free(g_pDOSData);
-        g_pDOSData = NULL;
-    }
-    
-    // Free X11 resources
-    if (g_ximage) {
-        // Free the image data before destroying
-        if (g_ximage->data) {
-            free(g_ximage->data);
-            g_ximage->data = NULL;
-        }
-        XDestroyImage(g_ximage);
-        g_ximage = NULL;
-    }
-    
-    if (g_gc) {
-        XFreeGC(g_display, g_gc);
-        g_gc = 0;
-    }
-    
-    if (g_window) {
-        XDestroyWindow(g_display, g_window);
-        g_window = 0;
-    }
-    
-    if (g_display) {
-        XCloseDisplay(g_display);
-        g_display = NULL;
-    }
+    // Setup timer for 60 FPS rendering (16ms interval)
+    g_timeout_add(16, on_timer, NULL);
 }
 
 /**
  * @brief Main application entry point
  */
-int main(int argc, char **argv) {
-    printf("PC Core Emulator - Linux/X11 Version\n");
-    
-    // Initialize PCCORE
-    InitializePCCore();
-    
-    // Create window
-    CreateAppWindow(argc, argv);
-    
-    // Start DOS thread
-    StartDOSThread(argc, argv);
-    
-    // Main render loop
-    long lastFrameTime = GetCurrentTimeMicros();
-    
-    while (g_running) {
-        long currentTime = GetCurrentTimeMicros();
-        long deltaTime = currentTime - lastFrameTime;
-        
-        // Handle events
-        HandleEvents();
-        
-        // Render at target FPS
-        if (deltaTime >= FRAME_TIME_US) {
-            RenderAndUpdate();
-            lastFrameTime = currentTime;
-        } else {
-            // Sleep for remaining frame time
-            long sleepTime = FRAME_TIME_US - deltaTime;
-            if (sleepTime > 1000) {
-                usleep(sleepTime);
-            }
-        }
-        
-        // Small yield to prevent 100% CPU usage
-        usleep(100);
+int main(int argc, char *argv[]) {
+    // Store command line arguments for DOS thread
+    g_argc = argc;
+    g_argv = (char **)malloc(sizeof(char *) * (argc + 1));
+    for (int i = 0; i < argc; i++) {
+        g_argv[i] = strdup(argv[i]);
     }
+    g_argv[argc] = NULL;
+    
+    // Create GTK application
+    GtkApplication *app = gtk_application_new("com.example.pccore", G_APPLICATION_FLAGS_NONE);
+    g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
+    
+    int status = g_application_run(G_APPLICATION(app), argc, argv);
     
     // Cleanup
-    CleanupResources();
+    g_object_unref(app);
     
-    return 0;
+    // Wait for DOS thread to finish
+    if (!g_dosFinished) {
+        pthread_cancel(g_dosThread);
+    }
+    pthread_join(g_dosThread, NULL);
+    
+    // Free command line arguments
+    for (int i = 0; i < g_argc; i++) {
+        free(g_argv[i]);
+    }
+    free(g_argv);
+    
+    // Free scaled buffer
+    if (g_scaledBuffer) {
+        free(g_scaledBuffer);
+    }
+    
+    printf("DOS execution completed with code: %d\n", g_dosResult);
+    
+    return status;
 }
