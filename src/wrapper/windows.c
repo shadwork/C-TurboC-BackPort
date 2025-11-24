@@ -1,156 +1,161 @@
+/**
+ * @file windows.c
+ * @brief Windows implementation of PC Core Emulator using Win32 API
+ */
+
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
+#include <sys/timeb.h>
 
 #include "../pccore/pccore.h"
 #include "../pccore/cga.h"
 #include "windows_keyboard.h"
 
+// Forward declarations
 extern int dos_main(int argc, char *argv[]);
 
-// --- Global state ---
+// Global state
 static HWND g_hwnd = NULL;
 static IMAGE g_imageBuffer = {0};
+static HBITMAP g_hBitmap = NULL;
+static void* g_bitmapBits = NULL;
 static int g_currentScale = 2;
-static BITMAPINFO g_bitmapInfo = {0};
-static unsigned char *g_scaledBuffer = NULL;
-static size_t g_scaledBufferSize = 0;
-
-// DOS thread
+static BOOL g_aspectEnabled = FALSE;
+static BOOL g_dosThreadRunning = FALSE;
 static HANDLE g_dosThread = NULL;
-static DWORD g_dosThreadId = 0;
-static volatile BOOL g_dosFinished = FALSE;
-static int g_dosResult = 0;
 
-// Blink state
+// Blink timing (60 FPS update rate)
 static const int FRAMES_PER_BLINK_HALF_CYCLE = 8;
 static int g_blinkFrameCounter = 0;
 
-// Command line args for DOS thread
-static int g_argc = 0;
-static char **g_argv = NULL;
+// DOS thread data
+typedef struct {
+    int argc;
+    char** argv;
+    int result;
+    BOOL finished;
+} DOSThreadData;
 
-// --- Forward declarations ---
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-void InitializePCCore(void);
-void RenderFrame(void);
-void ScalePixelBuffer(void);
-void SetWindowScale(int scale);
-DWORD WINAPI DOSThreadFunction(LPVOID lpParam);
-void CleanupDOSThread(void);
+static DOSThreadData* g_dosData = NULL;
+
+// Menu IDs
+#define ID_VIEW_SCALE_1X    101
+#define ID_VIEW_SCALE_2X    102
+#define ID_VIEW_SCALE_3X    103
+#define ID_VIEW_SCALE_4X    104
+#define ID_VIEW_ASPECT      105
+#define ID_FILE_EXIT        106
+
+// Timer ID
+#define TIMER_RENDER        1
 
 /**
  * @brief DOS thread function
  */
-DWORD WINAPI DOSThreadFunction(LPVOID lpParam) {
-    printf("DOS thread started with %d arguments\n", g_argc);
+DWORD WINAPI DOSThreadProc(LPVOID lpParam) {
+    DOSThreadData* data = (DOSThreadData*)lpParam;
     
-    // Call the DOS main function
-    g_dosResult = dos_main(g_argc, g_argv);
+    printf("DOS thread started with %d arguments\n", data->argc);
     
-    printf("DOS thread finished with result: %d\n", g_dosResult);
+    data->result = dos_main(data->argc, data->argv);
     
-    // Mark as finished
-    g_dosFinished = TRUE;
+    printf("DOS thread finished with result: %d\n", data->result);
+    
+    data->finished = TRUE;
+    g_dosThreadRunning = FALSE;
     
     return 0;
 }
 
 /**
- * @brief Initialize the PCCORE struct
+ * @brief Start the DOS thread
  */
-void InitializePCCore(void) {
-    // Zero out the entire pccore state
-    memset(&pccore, 0, sizeof(PCCORE));
-
-    // Set the requested video mode
-    pccore.mode = CGA320x200x2;
-
-    // Initialize key to 0 (meaning "no key pressed")
-    pccore.key = 0;
-
-    // Set the CGA Color Register (Port 0x3D9)
-    pccore.port[CGA_COLOR_REGISTER_PORT] = 0x20 | 0x10 | 0x01; // 0x31
-
-    // Run one initial render to get image dimensions
-    render(&g_imageBuffer, pccore);
+void StartDOSThread(int argc, char** argv) {
+    g_dosData = (DOSThreadData*)malloc(sizeof(DOSThreadData));
+    g_dosData->finished = FALSE;
+    g_dosData->result = 0;
+    g_dosData->argc = argc;
+    
+    // Allocate and copy arguments
+    g_dosData->argv = (char**)malloc(sizeof(char*) * (argc + 1));
+    for (int i = 0; i < argc; i++) {
+        g_dosData->argv[i] = _strdup(argv[i]);
+    }
+    g_dosData->argv[argc] = NULL;
+    
+    g_dosThreadRunning = TRUE;
+    g_dosThread = CreateThread(NULL, 0, DOSThreadProc, g_dosData, 0, NULL);
+    
+    if (g_dosThread == NULL) {
+        printf("Error creating DOS thread\n");
+        free(g_dosData);
+        g_dosData = NULL;
+        g_dosThreadRunning = FALSE;
+    } else {
+        printf("DOS thread created successfully\n");
+    }
 }
 
 /**
- * @brief Scale the pixel buffer using nearest-neighbor
+ * @brief Create scaled bitmap for rendering
  */
-void ScalePixelBuffer(void) {
-    if (g_imageBuffer.raw == NULL || g_imageBuffer.width == 0 || g_imageBuffer.height == 0) {
+void CreateScaledBitmap(HDC hdc, int width, int height) {
+    // Delete old bitmap if it exists
+    if (g_hBitmap) {
+        DeleteObject(g_hBitmap);
+        g_hBitmap = NULL;
+        g_bitmapBits = NULL;
+    }
+    
+    // Create DIB section
+    BITMAPINFO bmi = {0};
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = width;
+    bmi.bmiHeader.biHeight = -height; // Top-down DIB
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 24;
+    bmi.bmiHeader.biCompression = BI_RGB;
+    
+    g_hBitmap = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &g_bitmapBits, NULL, 0);
+}
+
+/**
+ * @brief Scale pixel buffer
+ */
+void ScalePixelBuffer() {
+    if (g_imageBuffer.raw == NULL || g_bitmapBits == NULL) {
         return;
     }
     
     int srcWidth = g_imageBuffer.width;
     int srcHeight = g_imageBuffer.height;
-    int dstWidth = srcWidth * g_currentScale;
-    int dstHeight = srcHeight * g_currentScale;
     
-    size_t requiredSize = dstWidth * dstHeight * 3;
+    // Determine effective scales based on aspect setting
+    int effectiveScaleX = g_currentScale * (g_aspectEnabled ? (int)g_imageBuffer.aspect_ratio : 1);
+    int effectiveScaleY = g_currentScale * (g_aspectEnabled ? 1 : (int)g_imageBuffer.aspect_ratio);
     
-    // Allocate or reallocate buffer if needed
-    if (g_scaledBuffer == NULL || g_scaledBufferSize != requiredSize) {
-        if (g_scaledBuffer) {
-            free(g_scaledBuffer);
-        }
-        g_scaledBuffer = (unsigned char *)malloc(requiredSize);
-        g_scaledBufferSize = requiredSize;
-    }
+    int dstWidth = srcWidth * effectiveScaleX;
+    int dstHeight = srcHeight * effectiveScaleY;
     
-    unsigned char *src = g_imageBuffer.raw;
+    unsigned char* src = g_imageBuffer.raw;
+    unsigned char* dst = (unsigned char*)g_bitmapBits;
     
-    // Fast nearest-neighbor scaling
+    // Nearest-neighbor scaling
     for (int dstY = 0; dstY < dstHeight; dstY++) {
-        int srcY = dstY / g_currentScale;
+        int srcY = dstY / effectiveScaleY;
+        
         for (int dstX = 0; dstX < dstWidth; dstX++) {
-            int srcX = dstX / g_currentScale;
+            int srcX = dstX / effectiveScaleX;
             
             int srcIndex = (srcY * srcWidth + srcX) * 3;
             int dstIndex = (dstY * dstWidth + dstX) * 3;
             
-            g_scaledBuffer[dstIndex] = src[srcIndex];
-            g_scaledBuffer[dstIndex + 1] = src[srcIndex + 1];
-            g_scaledBuffer[dstIndex + 2] = src[srcIndex + 2];
+            // RGB to BGR conversion for Windows
+            dst[dstIndex + 0] = src[srcIndex + 2]; // B
+            dst[dstIndex + 1] = src[srcIndex + 1]; // G
+            dst[dstIndex + 2] = src[srcIndex + 0]; // R
         }
-    }
-}
-
-/**
- * @brief Render a single frame
- */
-void RenderFrame(void) {
-    // Store current dimensions before rendering
-    const int oldWidth = g_imageBuffer.width;
-    const int oldHeight = g_imageBuffer.height;
-
-    // Update pccore.time with system milliseconds
-    DWORD ticks = GetTickCount();
-    pccore.time = (long long)ticks;
-
-    // Blink implementation
-    g_blinkFrameCounter++;
-    if (g_blinkFrameCounter >= FRAMES_PER_BLINK_HALF_CYCLE) {
-        pccore.blink = 1 - pccore.blink;
-        g_blinkFrameCounter = 0;
-    }
-
-    // Call the render function
-    render(&g_imageBuffer, pccore);
-
-    // Check if mode changed
-    if (g_imageBuffer.width != oldWidth || g_imageBuffer.height != oldHeight) {
-        printf("Detected mode change: %dx%d -> %dx%d\n", 
-               oldWidth, oldHeight, g_imageBuffer.width, g_imageBuffer.height);
-        SetWindowScale(g_currentScale);
-    }
-
-    // Trigger window redraw
-    if (g_hwnd) {
-        InvalidateRect(g_hwnd, NULL, FALSE);
     }
 }
 
@@ -158,264 +163,343 @@ void RenderFrame(void) {
  * @brief Set window scale
  */
 void SetWindowScale(int scale) {
-    if (scale < 1 || scale > 4) {
-        return;
-    }
-    
     g_currentScale = scale;
     
-    if (g_hwnd && g_imageBuffer.width > 0 && g_imageBuffer.height > 0) {
-        int newWidth = g_imageBuffer.width * scale;
-        int newHeight = g_imageBuffer.height * scale;
-        
-        // Calculate window size including borders
-        RECT rect = {0, 0, newWidth, newHeight};
-        DWORD style = GetWindowLong(g_hwnd, GWL_STYLE);
-        DWORD exStyle = GetWindowLong(g_hwnd, GWL_EXSTYLE);
-        AdjustWindowRectEx(&rect, style, TRUE, exStyle); // TRUE for menu bar
-        
-        int windowWidth = rect.right - rect.left;
-        int windowHeight = rect.bottom - rect.top;
-        
-        // Resize window (keeping position)
-        RECT currentRect;
-        GetWindowRect(g_hwnd, &currentRect);
-        SetWindowPos(g_hwnd, NULL, currentRect.left, currentRect.top, 
-                     windowWidth, windowHeight, SWP_NOMOVE | SWP_NOZORDER);
-        
-        printf("Scale set to %dx (%dx%d)\n", scale, newWidth, newHeight);
+    int baseWidth = g_imageBuffer.width;
+    int baseHeight = g_imageBuffer.height;
+    
+    // Calculate new client size
+    int clientWidth, clientHeight;
+    if (g_aspectEnabled) {
+        clientWidth = baseWidth * scale * (int)g_imageBuffer.aspect_ratio;
+        clientHeight = baseHeight * scale;
+    } else {
+        clientWidth = baseWidth * scale;
+        clientHeight = baseHeight * scale * (int)g_imageBuffer.aspect_ratio;
     }
+    
+    // Calculate window size including frame
+    RECT rect = {0, 0, clientWidth, clientHeight};
+    AdjustWindowRect(&rect, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, TRUE);
+    
+    int windowWidth = rect.right - rect.left;
+    int windowHeight = rect.bottom - rect.top;
+    
+    // Center window on screen
+    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+    int x = (screenWidth - windowWidth) / 2;
+    int y = (screenHeight - windowHeight) / 2;
+    
+    SetWindowPos(g_hwnd, NULL, x, y, windowWidth, windowHeight, SWP_NOZORDER);
+    
+    printf("Scale set to %dx (%dx%d)\n", scale, clientWidth, clientHeight);
+}
+
+/**
+ * @brief Update menu checkmarks
+ */
+void UpdateMenuCheckmarks(HMENU hMenu, int checkedId) {
+    CheckMenuItem(hMenu, ID_VIEW_SCALE_1X, MF_UNCHECKED);
+    CheckMenuItem(hMenu, ID_VIEW_SCALE_2X, MF_UNCHECKED);
+    CheckMenuItem(hMenu, ID_VIEW_SCALE_3X, MF_UNCHECKED);
+    CheckMenuItem(hMenu, ID_VIEW_SCALE_4X, MF_UNCHECKED);
+    CheckMenuItem(hMenu, checkedId, MF_CHECKED);
+}
+
+/**
+ * @brief Render and update
+ */
+void RenderAndUpdate() {
+    static int oldWidth = 0;
+    static int oldHeight = 0;
+    
+    // Store old dimensions
+    oldWidth = g_imageBuffer.width;
+    oldHeight = g_imageBuffer.height;
+    
+    // Update time
+    struct _timeb tb;
+    _ftime(&tb);
+    pccore.time = (long long)tb.time * 1000LL + tb.millitm;
+    
+    // Update blink
+    g_blinkFrameCounter++;
+    if (g_blinkFrameCounter >= FRAMES_PER_BLINK_HALF_CYCLE) {
+        pccore.blink = 1 - pccore.blink;
+        g_blinkFrameCounter = 0;
+    }
+    
+    // Render
+    render(&g_imageBuffer, pccore);
+    
+    // Check for mode change
+    if (g_imageBuffer.width != oldWidth || g_imageBuffer.height != oldHeight) {
+        printf("Detected mode change: %dx%d -> %dx%d\n", 
+               oldWidth, oldHeight, g_imageBuffer.width, g_imageBuffer.height);
+        SetWindowScale(g_currentScale);
+    }
+    
+    // Trigger repaint
+    InvalidateRect(g_hwnd, NULL, FALSE);
 }
 
 /**
  * @brief Window procedure
  */
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    switch (uMsg) {
-        case WM_DESTROY:
-            PostQuitMessage(0);
-            return 0;
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    static BYTE keyState[256];
+    
+    switch (msg) {
+        case WM_CREATE: {
+            // Create menu
+            HMENU hMenuBar = CreateMenu();
+            HMENU hFileMenu = CreateMenu();
+            HMENU hViewMenu = CreateMenu();
             
+            AppendMenu(hFileMenu, MF_STRING, ID_FILE_EXIT, "E&xit");
+            AppendMenu(hMenuBar, MF_POPUP, (UINT_PTR)hFileMenu, "&File");
+            
+            AppendMenu(hViewMenu, MF_STRING, ID_VIEW_SCALE_1X, "&1x Scale");
+            AppendMenu(hViewMenu, MF_STRING, ID_VIEW_SCALE_2X, "&2x Scale");
+            AppendMenu(hViewMenu, MF_STRING, ID_VIEW_SCALE_3X, "&3x Scale");
+            AppendMenu(hViewMenu, MF_STRING, ID_VIEW_SCALE_4X, "&4x Scale");
+            AppendMenu(hViewMenu, MF_SEPARATOR, 0, NULL);
+            AppendMenu(hViewMenu, MF_STRING, ID_VIEW_ASPECT, "&Aspect");
+            AppendMenu(hMenuBar, MF_POPUP, (UINT_PTR)hViewMenu, "&View");
+            
+            SetMenu(hwnd, hMenuBar);
+            UpdateMenuCheckmarks(hViewMenu, ID_VIEW_SCALE_2X);
+            
+            // Start render timer (60 FPS)
+            SetTimer(hwnd, TIMER_RENDER, 1000 / 60, NULL);
+            break;
+        }
+        
+        case WM_TIMER:
+            if (wParam == TIMER_RENDER) {
+                RenderAndUpdate();
+            }
+            break;
+        
         case WM_PAINT: {
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(hwnd, &ps);
             
             if (g_imageBuffer.width > 0 && g_imageBuffer.height > 0) {
-                // Scale the pixel buffer
+                // Calculate dimensions
+                int srcWidth = g_imageBuffer.width;
+                int srcHeight = g_imageBuffer.height;
+                int effectiveScaleX = g_currentScale * (g_aspectEnabled ? (int)g_imageBuffer.aspect_ratio : 1);
+                int effectiveScaleY = g_currentScale * (g_aspectEnabled ? 1 : (int)g_imageBuffer.aspect_ratio);
+                int dstWidth = srcWidth * effectiveScaleX;
+                int dstHeight = srcHeight * effectiveScaleY;
+                
+                // Create bitmap if needed
+                if (g_hBitmap == NULL) {
+                    CreateScaledBitmap(hdc, dstWidth, dstHeight);
+                }
+                
+                // Scale pixel buffer
                 ScalePixelBuffer();
                 
-                if (g_scaledBuffer) {
-                    int dstWidth = g_imageBuffer.width * g_currentScale;
-                    int dstHeight = g_imageBuffer.height * g_currentScale;
-                    
-                    // Setup bitmap info if needed
-                    if (g_bitmapInfo.bmiHeader.biSize == 0) {
-                        g_bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-                        g_bitmapInfo.bmiHeader.biPlanes = 1;
-                        g_bitmapInfo.bmiHeader.biBitCount = 24;
-                        g_bitmapInfo.bmiHeader.biCompression = BI_RGB;
-                    }
-                    
-                    g_bitmapInfo.bmiHeader.biWidth = dstWidth;
-                    g_bitmapInfo.bmiHeader.biHeight = -dstHeight; // Negative for top-down
-                    
-                    // Disable interpolation for crisp pixels
-                    SetStretchBltMode(hdc, COLORONCOLOR);
-                    
-                    // Draw the bitmap
-                    StretchDIBits(hdc,
-                        0, 0, dstWidth, dstHeight,
-                        0, 0, dstWidth, dstHeight,
-                        g_scaledBuffer,
-                        &g_bitmapInfo,
-                        DIB_RGB_COLORS,
-                        SRCCOPY);
-                }
+                // Draw bitmap
+                HDC hdcMem = CreateCompatibleDC(hdc);
+                HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, g_hBitmap);
+                
+                BitBlt(hdc, 0, 0, dstWidth, dstHeight, hdcMem, 0, 0, SRCCOPY);
+                
+                SelectObject(hdcMem, hOldBitmap);
+                DeleteDC(hdcMem);
             }
             
             EndPaint(hwnd, &ps);
-            return 0;
+            break;
         }
         
         case WM_KEYDOWN: {
             if (lParam & (1 << 30)) { // Check repeat bit
-                return 0; // Ignore key repeats
+                break;
             }
             
-            int scancode = get_scancode(wParam, lParam);
-            if (scancode != 0) {
-                pccore.key = scancode;
-                pccore.memory[BDA_KBD_STATUS_1] = get_statuscode();
-                printf("Key pressed: 0x%x 0x%x\n", pccore.key, pccore.memory[BDA_KBD_STATUS_1]);
-            }
-            return 0;
+            GetKeyboardState(keyState);
+            int scancode = get_scancode(wParam, lParam, keyState);
+            int statuscode = get_statuscode(keyState);
+            
+            pccore.key = scancode;
+            pccore.memory[BDA_KBD_STATUS_1] = statuscode;
+            
+            printf("Key pressed: 0x%04x Status: 0x%02x\n", scancode, statuscode);
+            break;
         }
         
         case WM_KEYUP: {
-            int scancode = get_scancode(wParam, lParam);
+            GetKeyboardState(keyState);
+            int scancode = get_scancode(wParam, lParam, keyState);
+            int statuscode = get_statuscode(keyState);
+            
             if (pccore.key == scancode) {
                 pccore.key = 0;
                 printf("Key released\n");
             }
-            pccore.memory[BDA_KBD_STATUS_1] = get_statuscode();
-            return 0;
+            
+            pccore.memory[BDA_KBD_STATUS_1] = statuscode;
+            break;
         }
         
         case WM_COMMAND: {
-            int wmId = LOWORD(wParam);
-            switch (wmId) {
-                case 1001: SetWindowScale(1); return 0;
-                case 1002: SetWindowScale(2); return 0;
-                case 1003: SetWindowScale(3); return 0;
-                case 1004: SetWindowScale(4); return 0;
-                case 1005: PostQuitMessage(0); return 0;
+            HMENU hMenu = GetMenu(hwnd);
+            HMENU hViewMenu = GetSubMenu(hMenu, 1);
+            
+            switch (LOWORD(wParam)) {
+                case ID_FILE_EXIT:
+                    PostQuitMessage(0);
+                    break;
+                case ID_VIEW_SCALE_1X:
+                    SetWindowScale(1);
+                    UpdateMenuCheckmarks(hViewMenu, ID_VIEW_SCALE_1X);
+                    break;
+                case ID_VIEW_SCALE_2X:
+                    SetWindowScale(2);
+                    UpdateMenuCheckmarks(hViewMenu, ID_VIEW_SCALE_2X);
+                    break;
+                case ID_VIEW_SCALE_3X:
+                    SetWindowScale(3);
+                    UpdateMenuCheckmarks(hViewMenu, ID_VIEW_SCALE_3X);
+                    break;
+                case ID_VIEW_SCALE_4X:
+                    SetWindowScale(4);
+                    UpdateMenuCheckmarks(hViewMenu, ID_VIEW_SCALE_4X);
+                    break;
+                case ID_VIEW_ASPECT: {
+                    g_aspectEnabled = !g_aspectEnabled;
+                    CheckMenuItem(hViewMenu, ID_VIEW_ASPECT, 
+                                g_aspectEnabled ? MF_CHECKED : MF_UNCHECKED);
+                    SetWindowScale(g_currentScale);
+                    printf("Aspect correction %s\n", g_aspectEnabled ? "enabled" : "disabled");
+                    break;
+                }
             }
             break;
         }
+        
+        case WM_CLOSE:
+            KillTimer(hwnd, TIMER_RENDER);
+            DestroyWindow(hwnd);
+            break;
+        
+        case WM_DESTROY:
+            if (g_hBitmap) {
+                DeleteObject(g_hBitmap);
+                g_hBitmap = NULL;
+            }
+            PostQuitMessage(0);
+            break;
+        
+        default:
+            return DefWindowProc(hwnd, msg, wParam, lParam);
     }
     
-    return DefWindowProc(hwnd, uMsg, wParam, lParam);
+    return 0;
 }
 
 /**
- * @brief Cleanup DOS thread
+ * @brief Initialize pccore
  */
-void CleanupDOSThread(void) {
-    if (g_dosThread) {
-        // Wait for thread to finish (with timeout)
-        WaitForSingleObject(g_dosThread, 5000);
-        CloseHandle(g_dosThread);
-        g_dosThread = NULL;
-    }
+void InitializePCCore() {
+    memset(&pccore, 0, sizeof(PCCORE));
+    pccore.mode = CGA320x200x2;
+    pccore.key = 0;
+    pccore.port[CGA_COLOR_REGISTER_PORT] = 0x31;
     
-    if (g_argv) {
-        for (int i = 0; i < g_argc; i++) {
-            free(g_argv[i]);
-        }
-        free(g_argv);
-        g_argv = NULL;
-    }
+    // Initial render to get dimensions
+    render(&g_imageBuffer, pccore);
 }
 
 /**
- * @brief Application entry point
+ * @brief WinMain entry point
  */
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
-    (void)hPrevInstance;
-    (void)lpCmdLine;
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
+                   LPSTR lpCmdLine, int nCmdShow) {
+    // Parse command line
+    int argc = __argc;
+    char** argv = __argv;
     
-    // Get command line arguments
-    int nArgs;
-    LPWSTR *szArglist = CommandLineToArgvW(GetCommandLineW(), &nArgs);
-    
-    if (szArglist == NULL) {
-        printf("CommandLineToArgvW failed\n");
-        return 1;
-    }
-    
-    // Convert to char** for dos_main
-    g_argc = nArgs;
-    g_argv = (char **)malloc(sizeof(char *) * (g_argc + 1));
-    
-    for (int i = 0; i < g_argc; i++) {
-        int len = WideCharToMultiByte(CP_UTF8, 0, szArglist[i], -1, NULL, 0, NULL, NULL);
-        g_argv[i] = (char *)malloc(len);
-        WideCharToMultiByte(CP_UTF8, 0, szArglist[i], -1, g_argv[i], len, NULL, NULL);
-    }
-    g_argv[g_argc] = NULL;
-    
-    LocalFree(szArglist);
-    
-    // Initialize PC Core
+    // Initialize pccore
     InitializePCCore();
     
     // Register window class
-    const char CLASS_NAME[] = "PCCoreWindowClass";
-    
-    WNDCLASSA wc = {0};
-    wc.lpfnWndProc = WindowProc;
+    WNDCLASSEX wc = {0};
+    wc.cbSize = sizeof(WNDCLASSEX);
+    wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
-    wc.lpszClassName = CLASS_NAME;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
-    wc.lpszMenuName = NULL;
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.lpszClassName = "PCCoreEmulator";
     
-    RegisterClassA(&wc);
-    
-    // Create menu bar
-    HMENU hMenuBar = CreateMenu();
-    HMENU hFileMenu = CreateMenu();
-    HMENU hViewMenu = CreateMenu();
-    
-    AppendMenuA(hFileMenu, MF_STRING, 1005, "E&xit");
-    AppendMenuA(hMenuBar, MF_POPUP, (UINT_PTR)hFileMenu, "&File");
-    
-    AppendMenuA(hViewMenu, MF_STRING, 1001, "1x Scale\tCtrl+1");
-    AppendMenuA(hViewMenu, MF_STRING, 1002, "2x Scale\tCtrl+2");
-    AppendMenuA(hViewMenu, MF_STRING, 1003, "3x Scale\tCtrl+3");
-    AppendMenuA(hViewMenu, MF_STRING, 1004, "4x Scale\tCtrl+4");
-    AppendMenuA(hMenuBar, MF_POPUP, (UINT_PTR)hViewMenu, "&View");
+    if (!RegisterClassEx(&wc)) {
+        MessageBox(NULL, "Window Registration Failed!", "Error", MB_ICONEXCLAMATION | MB_OK);
+        return 0;
+    }
     
     // Calculate initial window size
-    int baseWidth = g_imageBuffer.width * g_currentScale;
-    int baseHeight = g_imageBuffer.height * g_currentScale;
+    int baseWidth = g_imageBuffer.width;
+    int baseHeight = g_imageBuffer.height;
+    int clientWidth = baseWidth * g_currentScale;
+    int clientHeight = baseHeight * g_currentScale * (int)g_imageBuffer.aspect_ratio;
     
-    RECT rect = {0, 0, baseWidth, baseHeight};
-    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-    AdjustWindowRectEx(&rect, style, TRUE, 0);
+    RECT rect = {0, 0, clientWidth, clientHeight};
+    AdjustWindowRect(&rect, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, TRUE);
     
     int windowWidth = rect.right - rect.left;
     int windowHeight = rect.bottom - rect.top;
     
+    // Center window
+    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+    int x = (screenWidth - windowWidth) / 2;
+    int y = (screenHeight - windowHeight) / 2;
+    
     // Create window
-    g_hwnd = CreateWindowExA(
+    g_hwnd = CreateWindowEx(
         0,
-        CLASS_NAME,
+        "PCCoreEmulator",
         "PC Core Emulator",
-        style,
-        CW_USEDEFAULT, CW_USEDEFAULT,
-        windowWidth, windowHeight,
-        NULL,
-        hMenuBar,
-        hInstance,
-        NULL
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+        x, y, windowWidth, windowHeight,
+        NULL, NULL, hInstance, NULL
     );
     
     if (g_hwnd == NULL) {
-        printf("Failed to create window\n");
-        return 1;
+        MessageBox(NULL, "Window Creation Failed!", "Error", MB_ICONEXCLAMATION | MB_OK);
+        return 0;
     }
     
     ShowWindow(g_hwnd, nCmdShow);
     UpdateWindow(g_hwnd);
     
     // Start DOS thread
-    g_dosThread = CreateThread(NULL, 0, DOSThreadFunction, NULL, 0, &g_dosThreadId);
-    if (g_dosThread == NULL) {
-        printf("Failed to create DOS thread\n");
-    } else {
-        printf("DOS thread created successfully\n");
-    }
+    StartDOSThread(argc, argv);
     
-    // Setup timer for 60 FPS rendering
-    SetTimer(g_hwnd, 1, 16, NULL); // ~60 FPS (16ms)
-    
-    // Main message loop
-    MSG msg = {0};
-    while (GetMessage(&msg, NULL, 0, 0)) {
-        if (msg.message == WM_TIMER && msg.wParam == 1) {
-            RenderFrame();
-        }
+    // Message loop
+    MSG msg;
+    while (GetMessage(&msg, NULL, 0, 0) > 0) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
     
     // Cleanup
-    KillTimer(g_hwnd, 1);
-    CleanupDOSThread();
+    if (g_dosThread) {
+        WaitForSingleObject(g_dosThread, INFINITE);
+        CloseHandle(g_dosThread);
+    }
     
-    if (g_scaledBuffer) {
-        free(g_scaledBuffer);
+    if (g_dosData) {
+        for (int i = 0; i < g_dosData->argc; i++) {
+            free(g_dosData->argv[i]);
+        }
+        free(g_dosData->argv);
+        free(g_dosData);
     }
     
     return (int)msg.wParam;

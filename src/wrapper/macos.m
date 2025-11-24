@@ -22,13 +22,8 @@ typedef struct {
 } DOSThreadData;
 
 // --- Global/File-scope state for blinking ---
-// Target frequency is 3.745 Hz (0.267 seconds per cycle)
-// Period for state change is 0.267 / 2 = 0.1337 seconds
-// 60 FPS update rate (1/60s = 0.01666...s)
-// Number of frames per state change: 0.1337 / (1/60) ~= 8.02 frames
-// We will use 8 frames for a near-perfect blink rate.
 static const int FRAMES_PER_BLINK_HALF_CYCLE = 8;
-static int blinkFrameCounter = 0; // Tracks frames since last blink state change
+static int blinkFrameCounter = 0; 
 
 /**
  * @brief AppDelegate
@@ -36,31 +31,37 @@ static int blinkFrameCounter = 0; // Tracks frames since last blink state change
  */
 @interface AppDelegate : NSObject <NSApplicationDelegate> {
     NSWindow *window;
-    PixelRenderView *renderView; // Custom view that draws pixels directly
+    PixelRenderView *renderView; 
     
-    IMAGE imageBuffer;  // The image buffer our C code will render into
+    IMAGE imageBuffer; 
     
-    pthread_t dosThread;      // Thread handle for DOS execution
-    DOSThreadData *dosData;   // Data shared with DOS thread
+    pthread_t dosThread;      
+    DOSThreadData *dosData;   
     
-    NSInteger currentScale;   // Current integer scale (1, 2, 3, or 4)
+    NSInteger currentScale;   // Current integer scale
+    
+    // Fullscreen state tracking
+    BOOL isFullscreen;
+    NSRect savedWindowFrame;
+    NSInteger savedScale;
 }
-- (void)setScale:(NSInteger)scale;
+
+- (void)setScale:(NSInteger)scale resizeWindow:(BOOL)shouldResize;
+- (void)toggleFullscreen:(id)sender;
 - (void)createMenuBar;
 @end
 
 
 /**
  * @brief PixelRenderView
- * A custom NSView that draws pixels directly with perfect integer scaling
- * and captures keyboard input.
+ * A custom NSView that draws pixels directly with perfect integer scaling.
  */
 @interface PixelRenderView : NSView {
-    PCCORE *pccore_ptr; // Pointer to the main pccore struct
-    IMAGE *imageBuffer_ptr; // Pointer to the image buffer
-    NSInteger pixelScale; // Scale factor for each pixel
-    unsigned char *scaledBuffer; // Buffer for scaled pixel data
-    size_t scaledBufferSize; // Size of scaled buffer
+    PCCORE *pccore_ptr; 
+    IMAGE *imageBuffer_ptr; 
+    NSInteger pixelScale; 
+    unsigned char *scaledBuffer; 
+    size_t scaledBufferSize; 
 }
 - (id)initWithFrame:(NSRect)frameRect pccore:(PCCORE *)pccore imageBuffer:(IMAGE *)imgBuf scale:(NSInteger)scale;
 - (void)setPixelScale:(NSInteger)scale;
@@ -91,7 +92,7 @@ static int blinkFrameCounter = 0; // Tracks frames since last blink state change
 - (void)setPixelScale:(NSInteger)scale {
     pixelScale = scale;
     
-    // Free old buffer
+    // Free old buffer to force regeneration
     if (scaledBuffer) {
         free(scaledBuffer);
         scaledBuffer = NULL;
@@ -101,9 +102,6 @@ static int blinkFrameCounter = 0; // Tracks frames since last blink state change
     [self setNeedsDisplay:YES];
 }
 
-/**
- * @brief Tell the system we are willing to be the first responder
- */
 - (BOOL)acceptsFirstResponder {
     return YES;
 }
@@ -112,11 +110,13 @@ static int blinkFrameCounter = 0; // Tracks frames since last blink state change
     return YES;
 }
 
-/**
- * @brief Handle a key being pressed down.
- */
 - (void)keyDown:(NSEvent *)event {
     if (pccore_ptr == NULL || [event isARepeat]) {
+        return;
+    }
+    // Handle Fullscreen Toggle Shortcut (Cmd + F)
+    if (([event modifierFlags] & NSEventModifierFlagCommand) && [event keyCode] == 3) { // 3 is 'F'
+        [NSApp sendAction:@selector(toggleFullscreen:) to:nil from:self];
         return;
     }
     
@@ -125,9 +125,6 @@ static int blinkFrameCounter = 0; // Tracks frames since last blink state change
     printf("Key pressed: 0x%x 0x%x\n", pccore_ptr->key, pccore_ptr->memory[BDA_KBD_STATUS_1]);
 }
 
-/**
- * @brief Handle a key being released.
- */
 - (void)keyUp:(NSEvent *)event {
     if (pccore_ptr == NULL) {
         return;
@@ -151,7 +148,6 @@ static int blinkFrameCounter = 0; // Tracks frames since last blink state change
     NSInteger srcWidth = imageBuffer_ptr->width;
     NSInteger srcHeight = imageBuffer_ptr->height;
     
-    // Determine effective vertical scale based on multiplier
     NSInteger effectiveScaleY = pixelScale * (int)imageBuffer_ptr->aspect_ratio;
     
     NSInteger dstWidth = srcWidth * pixelScale;
@@ -159,7 +155,6 @@ static int blinkFrameCounter = 0; // Tracks frames since last blink state change
     
     size_t requiredSize = dstWidth * dstHeight * 3;
     
-    // Allocate or reallocate buffer if needed
     if (scaledBuffer == NULL || scaledBufferSize != requiredSize) {
         if (scaledBuffer) {
             free(scaledBuffer);
@@ -170,15 +165,10 @@ static int blinkFrameCounter = 0; // Tracks frames since last blink state change
     
     unsigned char *src = imageBuffer_ptr->raw;
     
-    // Fast nearest-neighbor scaling
     for (NSInteger dstY = 0; dstY < dstHeight; dstY++) {
-        // Use effective vertical scale for Y coordinate mapping
         NSInteger srcY = dstY / effectiveScaleY;
-        
         for (NSInteger dstX = 0; dstX < dstWidth; dstX++) {
-            // Use standard scale for X coordinate mapping
             NSInteger srcX = dstX / pixelScale;
-            
             NSInteger srcIndex = (srcY * srcWidth + srcX) * 3;
             NSInteger dstIndex = (dstY * dstWidth + dstX) * 3;
             
@@ -193,15 +183,15 @@ static int blinkFrameCounter = 0; // Tracks frames since last blink state change
  * @brief Draw the scaled pixels to the screen
  */
 - (void)drawRect:(NSRect)dirtyRect {
-    if (imageBuffer_ptr == NULL) {
+    // 1. Paint the background black (for borders in fullscreen)
+    [[NSColor blackColor] set];
+    NSRectFill(dirtyRect);
+
+    if (imageBuffer_ptr == NULL || imageBuffer_ptr->width == 0 || imageBuffer_ptr->height == 0) {
         return;
     }
     
-    if (imageBuffer_ptr->width == 0 || imageBuffer_ptr->height == 0) {
-        return;
-    }
-    
-    // Scale the pixel buffer
+    // 2. Scale the pixel buffer
     [self scalePixelBuffer];
     
     if (scaledBuffer == NULL) {
@@ -211,11 +201,11 @@ static int blinkFrameCounter = 0; // Tracks frames since last blink state change
     NSInteger srcWidth = imageBuffer_ptr->width;
     NSInteger srcHeight = imageBuffer_ptr->height;
     
+    // Calculate actual dimensions of the image to be drawn
     NSInteger dstWidth = srcWidth * pixelScale;
-    // Apply height multiplier to destination height
     NSInteger dstHeight = srcHeight * pixelScale * (int)imageBuffer_ptr->aspect_ratio;
     
-    // Create bitmap representation from scaled buffer
+    // 3. Create bitmap
     NSBitmapImageRep *rep = [[NSBitmapImageRep alloc]
         initWithBitmapDataPlanes:&scaledBuffer
                       pixelsWide:dstWidth
@@ -232,119 +222,85 @@ static int blinkFrameCounter = 0; // Tracks frames since last blink state change
         return;
     }
     
-    // Get the current graphics context
     CGContextRef context = [[NSGraphicsContext currentContext] CGContext];
-    
-    // Disable interpolation for crisp rendering
     CGContextSetInterpolationQuality(context, kCGInterpolationNone);
     
-    // Draw the bitmap
-    NSRect imageRect = NSMakeRect(0, 0, dstWidth, dstHeight);
+    // 4. Calculate Centering Offsets
+    // self.bounds is the size of the view (could be window size or screen size)
+    CGFloat viewWidth = self.bounds.size.width;
+    CGFloat viewHeight = self.bounds.size.height;
+    
+    CGFloat xOffset = floor((viewWidth - dstWidth) / 2.0);
+    CGFloat yOffset = floor((viewHeight - dstHeight) / 2.0);
+    
+    // 5. Draw Centered
+    NSRect imageRect = NSMakeRect(xOffset, yOffset, dstWidth, dstHeight);
     [rep drawInRect:imageRect];
 }
 
 @end
 
 
-/**
- * @brief Thread function that runs dos_main
- */
 void* dosThreadFunction(void *arg) {
     DOSThreadData *data = (DOSThreadData *)arg;
-    
     printf("DOS thread started with %d arguments\n", data->argc);
-    
-    // Call the DOS main function
     data->result = dos_main(data->argc, data->argv);
-    
     printf("DOS thread finished with result: %d\n", data->result);
-    
-    // Mark as finished
     data->finished = YES;
-    
-    // Post notification to main thread that DOS has finished
     dispatch_async(dispatch_get_main_queue(), ^{
         [[NSNotificationCenter defaultCenter] 
             postNotificationName:@"DOSThreadFinished" 
                           object:nil];
     });
-    
     return NULL;
 }
 
 
-/**
- * @brief AppDelegate Implementation
- */
 @implementation AppDelegate
 
-/**
- * Called when the application has finished launching.
- */
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
-    // Set default scale
     currentScale = 2;
+    isFullscreen = NO;
     
-    // 1. Initialize the C pccore state
     [self setuppccore];
-
-    // 2. Create the macOS window and views
     [self setupWindow];
-    
-    // 3. Create menu bar with scale options
     [self createMenuBar];
-
-    // 4. Activate and focus the application
     [NSApp activateIgnoringOtherApps:YES];
     
-    // 5. Start the render loop (aiming for 60 FPS)
     [NSTimer scheduledTimerWithTimeInterval:1.0/60.0
                                      target:self
                                    selector:@selector(renderAndUpdate:)
                                    userInfo:nil
                                     repeats:YES];
     
-    // 6. Register for DOS thread completion notification
     [[NSNotificationCenter defaultCenter] 
         addObserver:self 
            selector:@selector(dosThreadDidFinish:) 
                name:@"DOSThreadFinished" 
              object:nil];
     
-    // 7. Start the DOS thread (after window is ready)
     [self startDOSThread];
 }
 
-/**
- * Allow the app to terminate when the last window is closed.
- */
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender {
     return YES;
 }
 
-/**
- * Called when application is about to terminate
- */
 - (void)applicationWillTerminate:(NSNotification *)notification {
-    
     int killStatus = pthread_kill(dosThread, SIGUSR1);
     if (killStatus != 0) {
         printf("Error sending signal to thread: %d\n", killStatus);
     }
-
     if (dosData) {
         free(dosData);
         dosData = NULL;
     }
 }
 
-/**
- * @brief Creates the menu bar with View > Scale options
- */
 - (void)createMenuBar {
     NSMenu *mainMenu = [[NSMenu alloc] init];
     
-    // Application Menu
+    // App Menu
     NSMenuItem *appMenuItem = [[NSMenuItem alloc] init];
     NSMenu *appMenu = [[NSMenu alloc] init];
     [appMenu addItemWithTitle:@"Quit" action:@selector(terminate:) keyEquivalent:@"q"];
@@ -355,7 +311,10 @@ void* dosThreadFunction(void *arg) {
     NSMenuItem *viewMenuItem = [[NSMenuItem alloc] initWithTitle:@"View" action:nil keyEquivalent:@""];
     NSMenu *viewMenu = [[NSMenu alloc] initWithTitle:@"View"];
     
-    // Scale submenu items
+    NSMenuItem *fullScreenItem = [[NSMenuItem alloc] initWithTitle:@"Toggle Full Screen" action:@selector(toggleFullscreen:) keyEquivalent:@"f"];
+    [viewMenu addItem:fullScreenItem];
+    [viewMenu addItem:[NSMenuItem separatorItem]];
+
     NSMenuItem *scale1x = [[NSMenuItem alloc] initWithTitle:@"1x Scale" action:@selector(scale1x:) keyEquivalent:@"1"];
     NSMenuItem *scale2x = [[NSMenuItem alloc] initWithTitle:@"2x Scale" action:@selector(scale2x:) keyEquivalent:@"2"];
     NSMenuItem *scale3x = [[NSMenuItem alloc] initWithTitle:@"3x Scale" action:@selector(scale3x:) keyEquivalent:@"3"];
@@ -366,7 +325,6 @@ void* dosThreadFunction(void *arg) {
     [scale3x setTarget:self];
     [scale4x setTarget:self];
     
-    // Mark 2x as default
     [scale2x setState:NSControlStateValueOn];
     
     [viewMenu addItem:scale1x];
@@ -380,181 +338,164 @@ void* dosThreadFunction(void *arg) {
     [NSApp setMainMenu:mainMenu];
 }
 
-/**
- * @brief Scale menu action handlers
- */
-- (void)scale1x:(id)sender {
-    [self setScale:1];
-    [self updateMenuCheckmarks:sender];
-}
+- (void)scale1x:(id)sender { [self setScale:1 resizeWindow:!isFullscreen]; [self updateMenuCheckmarks:sender]; }
+- (void)scale2x:(id)sender { [self setScale:2 resizeWindow:!isFullscreen]; [self updateMenuCheckmarks:sender]; }
+- (void)scale3x:(id)sender { [self setScale:3 resizeWindow:!isFullscreen]; [self updateMenuCheckmarks:sender]; }
+- (void)scale4x:(id)sender { [self setScale:4 resizeWindow:!isFullscreen]; [self updateMenuCheckmarks:sender]; }
 
-- (void)scale2x:(id)sender {
-    [self setScale:2];
-    [self updateMenuCheckmarks:sender];
-}
-
-- (void)scale3x:(id)sender {
-    [self setScale:3];
-    [self updateMenuCheckmarks:sender];
-}
-
-- (void)scale4x:(id)sender {
-    [self setScale:4];
-    [self updateMenuCheckmarks:sender];
-}
-
-/**
- * @brief Update menu checkmarks
- */
 - (void)updateMenuCheckmarks:(id)sender {
     NSMenuItem *clickedItem = (NSMenuItem *)sender;
     NSMenu *menu = [clickedItem menu];
-    
     for (NSMenuItem *item in [menu itemArray]) {
+        // Don't uncheck the fullscreen toggle
+        if ([[item title] isEqualToString:@"Toggle Full Screen"]) continue;
         [item setState:NSControlStateValueOff];
     }
-    
     [clickedItem setState:NSControlStateValueOn];
 }
 
 /**
- * @brief Set the window scale
+ * @brief Sets the internal pixel scale and optionally resizes the window.
  */
-- (void)setScale:(NSInteger)scale {
+- (void)setScale:(NSInteger)scale resizeWindow:(BOOL)shouldResize {
     currentScale = scale;
     
-    const CGFloat baseWidth = imageBuffer.width;
-    const CGFloat baseHeight = imageBuffer.height;
+    if (shouldResize) {
+        const CGFloat baseWidth = imageBuffer.width;
+        const CGFloat baseHeight = imageBuffer.height;
+        
+        NSSize newSize = NSMakeSize(baseWidth * scale, 
+                                    baseHeight * scale * (int)imageBuffer.aspect_ratio);
+        
+        NSRect windowFrame = [window frame];
+        NSRect contentRect = [window contentRectForFrameRect:windowFrame];
+        
+        CGFloat widthDiff = newSize.width - contentRect.size.width;
+        CGFloat heightDiff = newSize.height - contentRect.size.height;
+        
+        windowFrame.size.width += widthDiff;
+        windowFrame.size.height += heightDiff;
+        windowFrame.origin.y -= heightDiff;
+        
+        [window setFrame:windowFrame display:YES animate:YES];
+    }
     
-    // Calculate new content size
-    // Apply HEIGHT_MULTIPLIER to the height calculation
-    NSSize newSize = NSMakeSize(baseWidth * scale, 
-                                baseHeight * scale * (int)imageBuffer.aspect_ratio);
-    
-    // Get current window frame
-    NSRect windowFrame = [window frame];
-    NSRect contentRect = [window contentRectForFrameRect:windowFrame];
-    
-    // Calculate the difference in size
-    CGFloat widthDiff = newSize.width - contentRect.size.width;
-    CGFloat heightDiff = newSize.height - contentRect.size.height;
-    
-    // Adjust window frame (keep top-left corner in place)
-    windowFrame.size.width += widthDiff;
-    windowFrame.size.height += heightDiff;
-    windowFrame.origin.y -= heightDiff; // Adjust Y to keep top in place
-    
-    // Set the new frame
-    [window setFrame:windowFrame display:YES animate:YES];
-    
-    // Update the render view's scale
+    // Update the render view's scale (this will trigger a redraw)
     [renderView setPixelScale:scale];
     
-    printf("Scale set to %ldx (%0.fx%0.f)\n", (long)scale, newSize.width, newSize.height);
+    printf("Scale set to %ldx\n", (long)scale);
 }
 
 /**
- * @brief Starts the DOS thread with command line arguments
+ * @brief Toggles between Windowed and Fullscreen mode with integer scaling and black borders.
  */
+- (void)toggleFullscreen:(id)sender {
+    if (isFullscreen) {
+        // --- EXIT Fullscreen ---
+        
+        // Restore window style
+        [window setStyleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable];
+        [window setLevel:NSNormalWindowLevel];
+        
+        // Restore previous scale and frame
+        [window setFrame:savedWindowFrame display:YES animate:YES];
+        [self setScale:savedScale resizeWindow:NO]; // Don't resize, we just set the frame above
+        
+        [window setTitle:@"PC Core Emulator"];
+        isFullscreen = NO;
+        
+    } else {
+        // --- ENTER Fullscreen ---
+        
+        // Save current state
+        savedWindowFrame = [window frame];
+        savedScale = currentScale;
+        
+        // Get screen dimensions
+        NSScreen *screen = [NSScreen mainScreen];
+        NSRect screenRect = [screen frame];
+        
+        // Calculate max integer scale
+        CGFloat baseW = imageBuffer.width;
+        CGFloat baseH = imageBuffer.height * (int)imageBuffer.aspect_ratio;
+        
+        if (baseW > 0 && baseH > 0) {
+            NSInteger maxScaleX = (NSInteger)(screenRect.size.width / baseW);
+            NSInteger maxScaleY = (NSInteger)(screenRect.size.height / baseH);
+            
+            // Use the smaller of the two to ensure it fits
+            NSInteger bestScale = (maxScaleX < maxScaleY) ? maxScaleX : maxScaleY;
+            if (bestScale < 1) bestScale = 1;
+            
+            // Set to borderless and fill screen
+            [window setStyleMask:NSWindowStyleMaskBorderless];
+            [window setLevel:NSMainMenuWindowLevel + 1]; // Cover menu bar and dock
+            [window setFrame:screenRect display:YES animate:YES];
+            
+            // Set the scale (PixelRenderView will center it automatically in drawRect)
+            [self setScale:bestScale resizeWindow:NO];
+            
+            isFullscreen = YES;
+        }
+    }
+    
+    // Ensure we keep focus for keyboard input
+    [window makeFirstResponder:renderView];
+}
+
 - (void)startDOSThread {
-    // Allocate thread data
     dosData = (DOSThreadData *)malloc(sizeof(DOSThreadData));
     dosData->finished = NO;
     dosData->result = 0;
     
-    // Get command line arguments from NSProcessInfo
     NSArray *arguments = [[NSProcessInfo processInfo] arguments];
     dosData->argc = (int)[arguments count];
-    
-    // Allocate argv array
     dosData->argv = (char **)malloc(sizeof(char *) * (dosData->argc + 1));
     
-    // Copy arguments
     for (int i = 0; i < dosData->argc; i++) {
         NSString *arg = arguments[i];
         const char *cStr = [arg UTF8String];
         dosData->argv[i] = strdup(cStr);
     }
-    dosData->argv[dosData->argc] = NULL; // NULL terminate
+    dosData->argv[dosData->argc] = NULL;
     
-    // Create the thread
     int result = pthread_create(&dosThread, NULL, dosThreadFunction, dosData);
     if (result != 0) {
         NSLog(@"Error creating DOS thread: %d", result);
         free(dosData);
         dosData = NULL;
-    } else {
-        printf("DOS thread created successfully\n");
     }
 }
 
-/**
- * @brief Called when DOS thread finishes (on main thread)
- */
 - (void)dosThreadDidFinish:(NSNotification *)notification {
-    printf("DOS thread completion notification received\n");
-    
     if (dosData) {
-        printf("DOS main returned: %d\n", dosData->result);
-        
-        // Wait for thread to fully complete
         pthread_join(dosThread, NULL);
-        
-        // Free allocated argument strings
-        for (int i = 0; i < dosData->argc; i++) {
-            free(dosData->argv[i]);
-        }
+        for (int i = 0; i < dosData->argc; i++) free(dosData->argv[i]);
         free(dosData->argv);
-        
-        // Store result for later if needed
-        int finalResult = dosData->result;
-        
         free(dosData);
         dosData = NULL;
-        
-        NSLog(@"DOS execution completed with code: %d", finalResult);
     }
 }
 
-/**
- * @brief Initializes the PCCORE struct with test data.
- */
 - (void)setuppccore {
-    // Zero out the entire pccore state
     memset(&pccore, 0, sizeof(PCCORE));
-
-    // Set the requested video mode
     pccore.mode = CGA320x200x2;
-
-    // Initialize key to 0 (meaning "no key pressed")
     pccore.key = 0;
-
-    // Set the CGA Color Register (Port 0x3D9)
-    pccore.port[CGA_COLOR_REGISTER_PORT] = 0x20 | 0x10 | 0x01; // 0x31
-
-    // Run one initial render to get image dimensions
+    pccore.port[CGA_COLOR_REGISTER_PORT] = 0x20 | 0x10 | 0x01; 
     render(&imageBuffer, pccore);
 }
 
-/**
- * @brief Creates the main application window and view.
- */
 - (void)setupWindow {
-    // Get base dimensions from the initial render
     const CGFloat baseWidth = imageBuffer.width;
     const CGFloat baseHeight = imageBuffer.height;
 
-    // Create the window rect at default scale (2x)
-    // APPLY HEIGHT_MULTIPLIER HERE FOR INITIAL WINDOW CREATION
     NSRect contentRect = NSMakeRect(0, 0, 
                                     baseWidth * currentScale, 
                                     baseHeight * currentScale * (int)imageBuffer.aspect_ratio);
     
-    // Create a NON-resizable window for pixel-perfect rendering
     NSWindowStyleMask style = NSWindowStyleMaskTitled |
                               NSWindowStyleMaskClosable |
                               NSWindowStyleMaskMiniaturizable;
-    // Note: NSWindowStyleMaskResizable is NOT included
 
     window = [[NSWindow alloc] initWithContentRect:contentRect
                                          styleMask:style
@@ -563,100 +504,60 @@ void* dosThreadFunction(void *arg) {
     
     [window setTitle:@"PC Core Emulator"];
     [window center];
-    
-    // Configure window to accept key events
     [window setAcceptsMouseMovedEvents:YES];
     [window setLevel:NSNormalWindowLevel];
 
-    // Create our custom pixel render view
     renderView = [[PixelRenderView alloc] initWithFrame:contentRect 
                                                  pccore:&pccore 
                                             imageBuffer:&imageBuffer 
                                                   scale:currentScale];
     
-    // Set the renderView as the window's content view
     [window setContentView:renderView];
-    
-    // Show the window
     [window makeKeyAndOrderFront:nil];
-    
-    // Set initial first responder
     [window setInitialFirstResponder:renderView];
-    
-    // Force the view to become first responder
     [window makeFirstResponder:renderView];
-    
-    // Ensure window is key window
-    if (![window isKeyWindow]) {
-        [window makeKeyWindow];
-    }
 }
 
-/**
- * @brief This is our main render loop, called by the NSTimer.
- */
 - (void)renderAndUpdate:(NSTimer *)timer {
-    // Store current dimensions before rendering
     const int oldWidth = imageBuffer.width;
     const int oldHeight = imageBuffer.height;
 
-    // --- UPDATE PCCORE.TIME WITH SYSTEM MILLISECONDS ---
     struct timeval te; 
-    gettimeofday(&te, NULL); // get current time
-    // Calculate milliseconds:
-    // (seconds * 1000) + (microseconds / 1000)
+    gettimeofday(&te, NULL); 
     pccore.time = (long long)te.tv_sec * 1000LL + te.tv_usec / 1000;
 
-    // BLINK IMPLEMENTATION
     blinkFrameCounter++;
-    // Check if it's time to toggle the blink state
     if (blinkFrameCounter >= FRAMES_PER_BLINK_HALF_CYCLE) {
-        // Toggle pccore.blink (0 to 1, or 1 to 0)
-        pccore.blink = 1 - pccore.blink; // Invert the value
-        // Reset counter
+        pccore.blink = 1 - pccore.blink; 
         blinkFrameCounter = 0;
-        // The frequency is: (1 / FRAMES_PER_BLINK_HALF_CYCLE) * (60 FPS) / 2
-        // (1 / 8) * 60 / 2 = 7.5 / 2 = 3.75 Hz
     }
 
-    // Call your C render function
     render(&imageBuffer, pccore);
 
+    // If resolution changed dynamically during execution
     if (imageBuffer.width != oldWidth || imageBuffer.height != oldHeight) {
-        printf("Detected mode change: %dx%d -> %dx%d\n", 
-               oldWidth, oldHeight, imageBuffer.width, imageBuffer.height);
-        
-        // Call the method that recalculates window size and updates the view
-        [self setScale:currentScale];
+        if (isFullscreen) {
+            // Re-calculate best fit for new resolution while staying full screen
+            [self toggleFullscreen:nil]; // Toggle off
+            [self toggleFullscreen:nil]; // Toggle on (re-calculates math)
+        } else {
+            [self setScale:currentScale resizeWindow:YES];
+        }
     }
 
-    // Safety check
-    if (imageBuffer.width == 0 || imageBuffer.height == 0) {
-        return;
+    if (imageBuffer.width > 0 && imageBuffer.height > 0) {
+        [renderView setNeedsDisplay:YES];
     }
-
-    // Mark the view as needing display
-    [renderView setNeedsDisplay:YES];
 }
 
 @end
 
-
-/**
- * @brief Main application entry point.
- */
 int main(int argc, const char * argv[]) {
     @autoreleasepool {
         NSApplication *app = [NSApplication sharedApplication];
-        
-        // Set activation policy to regular app (ensures it appears in Dock)
         [app setActivationPolicy:NSApplicationActivationPolicyRegular];
-        
-        // Create and set the application delegate
         AppDelegate *delegate = [[AppDelegate alloc] init];
         app.delegate = delegate;
-        
-        // Run the application
         [app run];
     }
     return 0;
