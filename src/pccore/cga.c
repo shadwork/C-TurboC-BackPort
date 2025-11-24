@@ -33,7 +33,7 @@ void render320x200x2(IMAGE* image, PCCORE pccore) {
     unsigned char color_reg = pccore.port[CGA_COLOR_REGISTER_PORT];
 
     // --- Add border definitions ---
-    const int border_size = 16;
+    const int border_size = CGA_BORDER;
     const int active_width = 320;
     const int active_height = 200;
     const int final_width = active_width + (border_size * 2);
@@ -141,7 +141,7 @@ void render640x200x1(IMAGE* image, PCCORE pccore) {
     unsigned char pixel_byte;
     int pixel_bit;
 
-    const int border_size = 16;
+    const int border_size = CGA_BORDER;
     const int active_width = 640;
     const int active_height = 200;
 
@@ -260,7 +260,7 @@ void render320x200x2g(IMAGE* image, PCCORE pccore) {
     unsigned char mode_reg = pccore.port[CGA_MODE_CONTROL_PORT];
 
     // --- Add border definitions ---
-    const int border_size = 16;
+    const int border_size = CGA_BORDER;
     const int active_width = 320;
     const int active_height = 200;
     const int final_width = active_width + (border_size * 2);
@@ -379,7 +379,7 @@ void render40x25(IMAGE* image, PCCORE pccore) {
     const int ROWS = 25;
     const int CHAR_WIDTH = 8;
     const int CHAR_HEIGHT = 8;
-    const int border_size = 16;
+    const int border_size = CGA_BORDER;
     
     const int active_width = COLS * CHAR_WIDTH;   // 320 pixels
     const int active_height = ROWS * CHAR_HEIGHT; // 200 pixels
@@ -518,7 +518,7 @@ void render80x25(IMAGE* image, PCCORE pccore) {
     const int ROWS = 25;
     const int CHAR_WIDTH = 8;
     const int CHAR_HEIGHT = 8;
-    const int border_size = 16;
+    const int border_size = CGA_BORDER;
     
     const int active_width = COLS * CHAR_WIDTH;   // 640 pixels
     const int active_height = ROWS * CHAR_HEIGHT; // 200 pixels

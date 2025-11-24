@@ -6,6 +6,7 @@
 #include <string.h> // For memset
 #include <pthread.h> // For threading
 #include <AppKit/NSEvent.h> // For key codes
+#include <sys/time.h> // For gettimeofday
 
 extern int dos_main(int argc, char *argv[]);
 
@@ -149,8 +150,12 @@ static int blinkFrameCounter = 0; // Tracks frames since last blink state change
     
     NSInteger srcWidth = imageBuffer_ptr->width;
     NSInteger srcHeight = imageBuffer_ptr->height;
+    
+    // Determine effective vertical scale based on multiplier
+    NSInteger effectiveScaleY = pixelScale * (int)imageBuffer_ptr->aspect_ratio;
+    
     NSInteger dstWidth = srcWidth * pixelScale;
-    NSInteger dstHeight = srcHeight * pixelScale;
+    NSInteger dstHeight = srcHeight * effectiveScaleY;
     
     size_t requiredSize = dstWidth * dstHeight * 3;
     
@@ -167,8 +172,11 @@ static int blinkFrameCounter = 0; // Tracks frames since last blink state change
     
     // Fast nearest-neighbor scaling
     for (NSInteger dstY = 0; dstY < dstHeight; dstY++) {
-        NSInteger srcY = dstY / pixelScale;
+        // Use effective vertical scale for Y coordinate mapping
+        NSInteger srcY = dstY / effectiveScaleY;
+        
         for (NSInteger dstX = 0; dstX < dstWidth; dstX++) {
+            // Use standard scale for X coordinate mapping
             NSInteger srcX = dstX / pixelScale;
             
             NSInteger srcIndex = (srcY * srcWidth + srcX) * 3;
@@ -202,8 +210,10 @@ static int blinkFrameCounter = 0; // Tracks frames since last blink state change
     
     NSInteger srcWidth = imageBuffer_ptr->width;
     NSInteger srcHeight = imageBuffer_ptr->height;
+    
     NSInteger dstWidth = srcWidth * pixelScale;
-    NSInteger dstHeight = srcHeight * pixelScale;
+    // Apply height multiplier to destination height
+    NSInteger dstHeight = srcHeight * pixelScale * (int)imageBuffer_ptr->aspect_ratio;
     
     // Create bitmap representation from scaled buffer
     NSBitmapImageRep *rep = [[NSBitmapImageRep alloc]
@@ -417,7 +427,9 @@ void* dosThreadFunction(void *arg) {
     const CGFloat baseHeight = imageBuffer.height;
     
     // Calculate new content size
-    NSSize newSize = NSMakeSize(baseWidth * scale, baseHeight * scale);
+    // Apply HEIGHT_MULTIPLIER to the height calculation
+    NSSize newSize = NSMakeSize(baseWidth * scale, 
+                                baseHeight * scale * (int)imageBuffer.aspect_ratio);
     
     // Get current window frame
     NSRect windowFrame = [window frame];
@@ -533,7 +545,10 @@ void* dosThreadFunction(void *arg) {
     const CGFloat baseHeight = imageBuffer.height;
 
     // Create the window rect at default scale (2x)
-    NSRect contentRect = NSMakeRect(0, 0, baseWidth * currentScale, baseHeight * currentScale);
+    // APPLY HEIGHT_MULTIPLIER HERE FOR INITIAL WINDOW CREATION
+    NSRect contentRect = NSMakeRect(0, 0, 
+                                    baseWidth * currentScale, 
+                                    baseHeight * currentScale * (int)imageBuffer.aspect_ratio);
     
     // Create a NON-resizable window for pixel-perfect rendering
     NSWindowStyleMask style = NSWindowStyleMaskTitled |

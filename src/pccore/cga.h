@@ -51,6 +51,8 @@
 #define CGA_BANK_DATA_SIZE 8000
 #define CGA_BANK1_OFFSET 8192
 
+#define CGA_BORDER 16
+
 // --- Static CGA Palette ---
 
 // Helper structure for a simple 24-bit RGB color
