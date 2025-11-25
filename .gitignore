@@ -55,3 +55,15 @@ dkms.conf
 *.dwo
 .DS_Store
 /.vscode
+/src/CMakeFiles
+
+# CMake generated files
+build/
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+Testing/

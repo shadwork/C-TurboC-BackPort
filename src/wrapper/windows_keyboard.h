@@ -25,7 +25,7 @@ extern "C" {
  * @return 16-bit IBM PC scan code (high byte = scan code, low byte = ASCII)
  *         Returns 0x0000 if the key is not mapped
  */
-int get_scancode(WPARAM vkCode, LPARAM lParam);
+int get_scancode(WPARAM vkCode, LPARAM lParam, BYTE *keyboardState);
 
 /**
  * @brief Converts current keyboard state to IBM PC BIOS Data Area 
@@ -43,7 +43,7 @@ int get_scancode(WPARAM vkCode, LPARAM lParam);
  *
  * @return An integer representing the 0x417 byte
  */
-int get_statuscode(void);
+int get_statuscode(BYTE *keyboardState);
 
 #ifdef __cplusplus
 }
