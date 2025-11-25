@@ -12,10 +12,6 @@
 #ifndef MACOS_KEYBOARD_H
 #define MACOS_KEYBOARD_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /**
  * @brief Converts macOS NSEvent to IBM PC 16-bit scan code
  * @param event The NSEvent containing key code and modifier flags
@@ -42,9 +38,5 @@ int get_scancode(NSEvent *event);
  * @return An integer representing the 0x417 byte
  */
 int get_statuscode(NSEvent *event);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif // MACOS_KEYBOARD_H

@@ -81,6 +81,10 @@ typedef struct {
 
 // --- Function Prototypes ---
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * @brief Renders the PC core's memory into an image buffer.
  *
@@ -95,5 +99,9 @@ typedef struct {
 void render(IMAGE* image, PCCORE pccore);
 
 PCCORE pccore;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // PCCORE_H

@@ -8,7 +8,7 @@
 #include <AppKit/NSEvent.h> // For key codes
 #include <sys/time.h> // For gettimeofday
 
-extern int dos_main(int argc, char *argv[]);
+extern "C" int dos_main(int argc, char *argv[]);
 
 // --- Forward Declaration
 @class PixelRenderView;

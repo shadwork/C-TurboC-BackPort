@@ -1,115 +1,91 @@
+# Minimum required version of CMake
 cmake_minimum_required(VERSION 3.10)
 
-# --- NEW CONFIGURATION FOR GCC ENFORCEMENT ---
-# Enforce GCC compiler on Windows and Linux as requested.
-if (NOT APPLE)
-    message(STATUS "Enforcing GCC/G++ compilers for non-Apple platform.")
-    # Set C compiler to gcc
-    set(CMAKE_C_COMPILER "gcc")
-    # Set CXX compiler to g++ (good practice even if CXX sources aren't currently used)
-    set(CMAKE_CXX_COMPILER "g++")
-endif()
-# --- END OF NEW CONFIGURATION FOR GCC ENFORCEMENT ---
+# Define the project name
+project(TurboC-Backport LANGUAGES C CXX OBJCXX)
 
-# Define the project and enable C and CXX.
-project(AppRunner C CXX) 
+# --- Variables ---
 
-# Set C standard for all C source files
-set(CMAKE_C_STANDARD 99)
-set(CMAKE_C_STANDARD_REQUIRED ON)
+# Define the executable name
+set(TARGET_NAME matrix)
 
-# --------------------------------------------------------------------------------
-# 1. Collect Common Sources
-# --------------------------------------------------------------------------------
-
-# Use file(GLOB) to find all C files in the specified directories.
-file(GLOB PCCORE_SOURCES "pccore/*.c")
-file(GLOB TURBOC_SOURCES "turboc/*.c")
-
-# Define the common sources for the executable
-# samples/matrix.c has been REMOVED from this set.
-set(COMMON_SOURCES
-    ${PCCORE_SOURCES}
-    ${TURBOC_SOURCES}
+# Define source files for the pccore library
+set(PCCORE_SOURCES
+    pccore/pccore.c
+    pccore/cga.c
+    pccore/cgafont.c
+    turboc/dos.c
+    turboc/bios.c
+    turboc/int10.c
+    turboc/conio.c
 )
 
-# --- NEW SOURCE SET FOR SAMPLES ---
-# Define a separate source set for samples/matrix.c
-set(SAMPLE_SOURCES
+# Define source files for the executable
+set(MATRIX_SOURCES
     samples/matrix.c
+    wrapper/macos_keyboard.m
+    wrapper/macos.m
 )
-# --- END NEW SOURCE SET FOR SAMPLES ---
 
-# --------------------------------------------------------------------------------
-# 2. Create Executable Target and set common properties
-# --------------------------------------------------------------------------------
+# --- Compiler Configuration ---
 
-# The executable now includes both COMMON_SOURCES and the new SAMPLE_SOURCES
-add_executable(app_runner ${COMMON_SOURCES} ${SAMPLE_SOURCES})
+# Set the C compiler (equivalent to CC = clang)
+# CMake will typically find clang if it's the system default or specified via env var.
+set(CMAKE_C_COMPILER "clang")
+set(CMAKE_OBJC_COMPILER "clang")
 
-# Add all relevant directories to the include path for header files (.h)
-target_include_directories(app_runner PUBLIC
+# --- Include Directories ---
+
+# Define common include paths for all targets
+set(COMMON_INCLUDES
+    ${CMAKE_SOURCE_DIR}/pccore
+    ${CMAKE_SOURCE_DIR}/turboc
+    ${CMAKE_SOURCE_DIR}/samples
+)
+
+# --- Library Builds ---
+
+## 1. pccore Library
+add_library(pccore STATIC ${PCCORE_SOURCES})
+
+# Make sure the pccore library can see its own headers and the turboc headers if needed
+target_include_directories(pccore PUBLIC ${COMMON_INCLUDES})
+
+# --- Executable Build ---
+
+# Add the executable target
+add_executable(${TARGET_NAME} ${MATRIX_SOURCES})
+
+# Link the libraries to the executable
+target_link_libraries(${TARGET_NAME} PRIVATE
     pccore
-    turboc
-    wrapper
-    samples
+    "-framework Cocoa"
+    "-framework AppKit"
 )
 
-# Apply the required compile definition (-DWRAPPER) to all platforms
-target_compile_definitions(app_runner PUBLIC
+# Set common include directories for the executable
+target_include_directories(${TARGET_NAME} PRIVATE ${COMMON_INCLUDES})
+
+# --- Compilation Flags (CFLAGS) ---
+
+# Apply general compiler flags (C, CXX, Objective-C/C++ sources)
+target_compile_options(${TARGET_NAME} PRIVATE
+    -fobjc-arc
+    -Wall
+    -g
+    -fmodules
+    -fcxx-modules
+)
+
+# Define the preprocessor macro (DWRAPPER)
+target_compile_definitions(${TARGET_NAME} PRIVATE
     WRAPPER
 )
 
-# --------------------------------------------------------------------------------
-# 3. Add Platform-Specific Sources and Linker Flags
-# --------------------------------------------------------------------------------
+# --- Linking Flags (LDFLAGS) ---
 
-if (APPLE)
-    # macOS (Objective-C source files)
-    message(STATUS 
-"Configuring for macOS (Objective-C)")
-
-    # CRITICAL: Enable Objective-C language support only when compiling on macOS
-    enable_language(OBJC)
-    
-    # Add the Objective-C sources (.m)
-    target_sources(app_runner PRIVATE
-        wrapper/macos.m
-        wrapper/macos_keyboard.m
-    )
-    
-    # Add Objective-C specific compiler options
-    # -fmodules is required to handle Cocoa/AppKit framework headers cleanly
-    target_compile_options(app_runner PRIVATE
-        "$<$<COMPILE_LANGUAGE:OBJC>:-fmodules>"
-  
-    )
-
-    # Link required frameworks (LDFLAGS = -framework Cocoa -framework AppKit)
-    target_link_libraries(app_runner PRIVATE
-        "-framework Cocoa"
-        "-framework AppKit"
-    )
-
-elseif (WIN32)
-    # Windows (C source files)
-    message(STATUS "Configuring for Windows (using GCC/MinGW)")
-    
-    target_sources(app_runner PRIVATE
-        wrapper/windows.c
-        wrapper/windows_keyboard.c
-    )
-
-elseif (UNIX AND NOT APPLE)
-    # Linux (C source files). 
-    message(STATUS "Configuring for Linux/Generic Unix (using GCC)")
-    
-    target_sources(app_runner PRIVATE
-        wrapper/linux.c
-        wrapper/linux_keyboard.c
-    )
-
-else()
-    # Handle unknown platforms
-    message(FATAL_ERROR "Unsupported platform detected. Cannot continue build configuration.")
-endif()
+# Link options for the executable (mostly redundant now that link libraries handles frameworks)
+target_link_options(${TARGET_NAME} PRIVATE
+    -fmodules
+    -fcxx-modules
+)
