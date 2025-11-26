@@ -4,8 +4,15 @@ cmake_minimum_required(VERSION 3.10)
 # Define the project name
 project(TurboC LANGUAGES C CXX OBJCXX)
 
+add_compile_definitions(WRAPPER)
+
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 # --- Variables ---
+
+# Define the executable name (Used by the samples subdirectory)
+set(PCCORE_NAME pccore)
+set(MATRIX_NAME matrix)
+set(FIRE_NAME fire)
 
 # Configure WRAPPER_SOURCES based on the operating system
 if(APPLE)
@@ -13,7 +20,19 @@ if(APPLE)
     set(WRAPPER_SOURCES
         ${CMAKE_SOURCE_DIR}/wrapper/macos_keyboard.m
         ${CMAKE_SOURCE_DIR}/wrapper/macos.m
-    )
+    )   
+    set(WRAPPER_LINK_LIBRARIES
+        ${PCCORE_NAME}
+        "-framework Cocoa"
+        "-framework AppKit"
+    )    
+    set(WRAPPER_COMPILE_OPTIONS
+        -fobjc-arc
+        -Wall
+        -g
+        -fmodules
+        -fcxx-modules
+    )    
     message(STATUS "Configuring for macOS (APPLE).")
 elseif(UNIX)
     # Linux/BSD specific sources (C files). Note: APPLE is checked first.
@@ -33,12 +52,6 @@ else()
     # Fallback for unsupported platforms
     message(FATAL_ERROR "Unsupported platform for WRAPPER_SOURCES configuration. Please add support for ${CMAKE_SYSTEM_NAME}.")
 endif()
-
-
-# Define the executable name (Used by the samples subdirectory)
-set(PCCORE_NAME pccore)
-set(MATRIX_NAME matrix)
-set(FIRE_NAME fire)
 
 # --- Compiler Configuration ---
 

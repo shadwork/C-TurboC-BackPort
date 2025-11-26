@@ -9,9 +9,7 @@ add_executable(${MATRIX_NAME} ${MATRIX_SOURCES})
 
 # Link the libraries and frameworks to the executable
 target_link_libraries(${MATRIX_NAME} PRIVATE
-    ${PCCORE_NAME}
-    "-framework Cocoa"
-    "-framework AppKit"
+    ${WRAPPER_LINK_LIBRARIES}
 )
 
 # Set common include directories for the executable
@@ -22,22 +20,5 @@ target_include_directories(${MATRIX_NAME} PRIVATE ${COMMON_INCLUDES})
 
 # Apply general compiler flags (C, CXX, Objective-C/C++ sources)
 target_compile_options(${MATRIX_NAME} PRIVATE
-    -fobjc-arc
-    -Wall
-    -g
-    -fmodules
-    -fcxx-modules
-)
-
-# Define the preprocessor macro
-target_compile_definitions(${MATRIX_NAME} PRIVATE
-    WRAPPER
-)
-
-# --- Linking Flags ---
-
-# Link options for the executable
-target_link_options(${MATRIX_NAME} PRIVATE
-    -fmodules
-    -fcxx-modules
+    ${WRAPPER_COMPILE_OPTIONS}
 )
