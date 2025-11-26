@@ -4,6 +4,7 @@ cmake_minimum_required(VERSION 3.10)
 # Define the project name
 project(TurboC LANGUAGES C CXX OBJCXX)
 
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 # --- Variables ---
 
 # Configure WRAPPER_SOURCES based on the operating system
