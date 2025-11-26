@@ -7,12 +7,6 @@ set(FIRE_SOURCES
 # TARGET_NAME and SAMPLE_SOURCES are defined in the parent scopes
 add_executable(${FIRE_NAME} ${FIRE_SOURCES})
 
-# Set C90 standard (ANSI C) for the target
-set_target_properties(${FIRE_NAME} PROPERTIES
-    C_STANDARD 90
-    C_STANDARD_REQUIRED ON
-)
-
 # Link the libraries and frameworks to the executable
 target_link_libraries(${FIRE_NAME} PRIVATE
     ${WRAPPER_LINK_LIBRARIES}
