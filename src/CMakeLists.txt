@@ -13,6 +13,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(PCCORE_NAME pccore)
 set(MATRIX_NAME matrix)
 set(FIRE_NAME fire)
+set(PLASMA_NAME plasma)
 
 # Configure WRAPPER_SOURCES based on the operating system
 if(APPLE)
@@ -72,3 +73,4 @@ add_subdirectory(wrapper)
 # 2. Build the samples
 add_subdirectory(samples/matrix)
 add_subdirectory(samples/fire)
+add_subdirectory(samples/plasma)
