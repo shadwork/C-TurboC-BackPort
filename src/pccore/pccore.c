@@ -61,3 +61,5 @@ void render(IMAGE* image, PCCORE pccore) {
             break;
     }
 }
+
+PCCORE pccore;

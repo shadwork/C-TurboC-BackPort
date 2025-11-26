@@ -2,7 +2,11 @@
 cmake_minimum_required(VERSION 3.10)
 
 # Define the project name
-project(TurboC LANGUAGES C CXX OBJCXX)
+if(APPLE)
+    project(TurboC-Backport LANGUAGES C CXX OBJCXX)
+else()
+    project(TurboC-Backport LANGUAGES C CXX)
+endif()
 
 add_compile_definitions(WRAPPER)
 
@@ -34,6 +38,9 @@ if(APPLE)
         -fmodules
         -fcxx-modules
     )    
+    # Set the C and Objective-C compilers
+    set(CMAKE_C_COMPILER "clang")
+    set(CMAKE_OBJC_COMPILER "clang")    
     message(STATUS "Configuring for macOS (APPLE).")
 elseif(UNIX)
     # Linux/BSD specific sources (C files). Note: APPLE is checked first.
@@ -48,17 +55,18 @@ elseif(WIN32)
         ${CMAKE_SOURCE_DIR}/wrapper/windows_keyboard.c
         ${CMAKE_SOURCE_DIR}/wrapper/windows.c
     )
+    set(WRAPPER_LINK_LIBRARIES
+        ${PCCORE_NAME}
+        gdi32
+        user32
+    )       
+    # Set the C and Objective-C compilers
+    set(CMAKE_C_COMPILER "gcc")
     message(STATUS "Configuring for Windows (WIN32).")
 else()
     # Fallback for unsupported platforms
     message(FATAL_ERROR "Unsupported platform for WRAPPER_SOURCES configuration. Please add support for ${CMAKE_SYSTEM_NAME}.")
 endif()
-
-# --- Compiler Configuration ---
-
-# Set the C and Objective-C compilers
-set(CMAKE_C_COMPILER "clang")
-set(CMAKE_OBJC_COMPILER "clang")
 
 # Define common include paths for all targets
 set(COMMON_INCLUDES

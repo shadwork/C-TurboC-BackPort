@@ -98,10 +98,10 @@ extern "C" {
  */
 void render(IMAGE* image, PCCORE pccore);
 
-PCCORE pccore;
-
 #ifdef __cplusplus
 }
 #endif
+
+extern PCCORE pccore;
 
 #endif // PCCORE_H
