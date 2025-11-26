@@ -29,40 +29,40 @@ int int10(union REGS *inregs, union REGS *outregs)
 }
 
 void setVideoMode(int mode){
-    pccore.port[CGA_COLOR_REGISTER_PORT] = 0;
-    memset(&pccore.memory[CGA_VIDEO_RAM_START],0,CGA_BANK1_OFFSET*2);
+    pccore->port[CGA_COLOR_REGISTER_PORT] = 0;
+    memset(&pccore->memory[CGA_VIDEO_RAM_START],0,CGA_BANK1_OFFSET*2);
     switch (mode)
     {
     case 0:
-        pccore.mode = CGA40x25;
+        pccore->mode = CGA40x25;
         // its grey by default
-        pccore.port[CGA_MODE_CONTROL_PORT] = 0x04; 
+        pccore->port[CGA_MODE_CONTROL_PORT] = 0x04; 
         break;    
     case 1:
-        pccore.mode = CGA40x25;
-        pccore.port[CGA_MODE_CONTROL_PORT] = 0x00; 
+        pccore->mode = CGA40x25;
+        pccore->port[CGA_MODE_CONTROL_PORT] = 0x00; 
         break; 
     case 2:
-        pccore.mode = CGA80x25;
+        pccore->mode = CGA80x25;
         // its grey by default
-        pccore.port[CGA_MODE_CONTROL_PORT] = 0x04; 
+        pccore->port[CGA_MODE_CONTROL_PORT] = 0x04; 
         break;    
     case 3:
-        pccore.mode = CGA80x25;
-        pccore.port[CGA_MODE_CONTROL_PORT] = 0x00; 
+        pccore->mode = CGA80x25;
+        pccore->port[CGA_MODE_CONTROL_PORT] = 0x00; 
         break;                     
     case 4:
-        pccore.mode = CGA320x200x2;
-        pccore.port[CGA_MODE_CONTROL_PORT] = 0x00;        
+        pccore->mode = CGA320x200x2;
+        pccore->port[CGA_MODE_CONTROL_PORT] = 0x00;        
         break;
     case 5:
-        pccore.mode = CGA320x200x2g;
+        pccore->mode = CGA320x200x2g;
         // its grey by default
-        pccore.port[CGA_MODE_CONTROL_PORT] = 0x04; 
+        pccore->port[CGA_MODE_CONTROL_PORT] = 0x04; 
         break;    
     case 6:
-        pccore.mode = CGA640x200x1;
-        pccore.port[CGA_MODE_CONTROL_PORT] = 0x00; 
+        pccore->mode = CGA640x200x1;
+        pccore->port[CGA_MODE_CONTROL_PORT] = 0x00; 
         break;          
     default:
         break;

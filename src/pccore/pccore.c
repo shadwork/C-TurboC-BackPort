@@ -18,15 +18,14 @@
  * @param pccore The current state of the PC core to render from.
  * (Passed by value as per pccore.h)
  */
-void render(IMAGE* image, PCCORE pccore) {
+void render(IMAGE* image, PCCORE* pccore) {
     if (image == NULL) {
         return; // Safety check: do nothing if image is null
     }
-
     // Dispatch to the correct rendering function based on the mode.
     // We pass a pointer to pccore to the sub-functions
     // to avoid copying the large struct again.
-    switch (pccore.mode) {
+    switch (pccore->mode) {
         case CGA320x200x2:
             // Call the specific function for 320x200x2 mode
             render320x200x2(image, pccore);
@@ -55,11 +54,11 @@ void render(IMAGE* image, PCCORE pccore) {
         default:
             // Handle unknown or unsupported mode
             // We can clear the image or just log an error.
-            printf("Unknown video mode requested: %d\n", pccore.mode);
+            printf("Unknown video mode requested: %d\n", pccore->mode);
             image->width = 0;
             image->height = 0;
             break;
     }
 }
 
-PCCORE pccore;
+PCCORE *pccore;

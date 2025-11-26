@@ -16,22 +16,22 @@ int int86(int intno,union REGS *inregs, union REGS *outregs)
 }
 
 void outportb(int portid, char value){
-    pccore.port[portid] = value;
+    pccore->port[portid] = value;
 }
 
 void* MK_FP(int seg, int ofs)
 {
     unsigned long linear_address = (unsigned long)(seg * 16) + (unsigned long)ofs;
-    return (void*)&pccore.memory[linear_address];
+    return (void*)&pccore->memory[linear_address];
 }
 
 void delay(int milliseconds) {
     if (milliseconds == 0) {
         return;
     }
-    long long end_time = pccore.time + milliseconds;
+    long long end_time = pccore->time + milliseconds;
 
-    while ((end_time - pccore.time) > 0) {
+    while ((end_time - pccore->time) > 0) {
 
     }
 }

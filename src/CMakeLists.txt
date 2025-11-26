@@ -60,7 +60,11 @@ elseif(WIN32)
         ${PCCORE_NAME}
         gdi32
         user32
-    )       
+        kernel32
+    )
+    set(WRAPPER_COMPILE_OPTIONS
+        -mwindows
+    )             
     # Set the C and Objective-C compilers
     set(CMAKE_C_COMPILER "gcc")
     message(STATUS "Configuring for Windows (WIN32).")

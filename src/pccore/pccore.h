@@ -96,12 +96,12 @@ extern "C" {
  * pixel data.
  * @param pccore The current state of the PC core to render from.
  */
-void render(IMAGE* image, PCCORE pccore);
+void render(IMAGE* image, PCCORE* pccore);
 
 #ifdef __cplusplus
 }
 #endif
 
-extern PCCORE pccore;
+extern PCCORE *pccore;
 
 #endif // PCCORE_H

@@ -147,7 +147,7 @@ static const RgbColor g_cgaCyanRedWhitePalette[4] = {
  * @param image  Pointer to the output image buffer.
  * @param pccore A const pointer to the PC core state.
  */
-void render320x200x2(IMAGE* image, PCCORE pccore);
+void render320x200x2(IMAGE* image, PCCORE* pccore);
 
 /**
  * @brief Renders the 320x200 4-color "Mode 5" (Switches between Grayscale/Cyan-Red-White).
@@ -156,7 +156,7 @@ void render320x200x2(IMAGE* image, PCCORE pccore);
  * @param image  Pointer to the output image buffer.
  * @param pccore A const pointer to the PC core state.
  */
-void render320x200x2g(IMAGE* image, PCCORE pccore);
+void render320x200x2g(IMAGE* image, PCCORE* pccore);
 
 /**
  * @brief Renders the 640x200 2-color mode.
@@ -165,7 +165,7 @@ void render320x200x2g(IMAGE* image, PCCORE pccore);
  * @param image  Pointer to the output image buffer.
  * @param pccore A const pointer to the PC core state.
  */
-void render640x200x1(IMAGE* image, PCCORE pccore);
+void render640x200x1(IMAGE* image, PCCORE* pccore);
 
 /**
  * @brief Renders the 40x25 B/W text mode (Mode 0).
@@ -185,7 +185,7 @@ void render640x200x1(IMAGE* image, PCCORE pccore);
  * @param image  Pointer to the output image buffer.
  * @param pccore A const pointer to the PC core state.
  */
-void render40x25(IMAGE* image, PCCORE pccore);
+void render40x25(IMAGE* image, PCCORE* pccore);
 
 /**
  * @brief Renders the 80x25 text mode (Mode 1) with support for blinking and B/W selection.
@@ -203,6 +203,6 @@ void render40x25(IMAGE* image, PCCORE pccore);
  * @param image  Pointer to the output image buffer.
  * @param pccore A const pointer to the PC core state.
  */
-void render80x25(IMAGE* image, PCCORE pccore);
+void render80x25(IMAGE* image, PCCORE* pccore);
 
 #endif // CGA_H

@@ -12,7 +12,7 @@
  * @param image  Pointer to the output image buffer.
  * @param pccore A const pointer to the PC core state.
  */
-void render320x200x2(IMAGE* image, PCCORE pccore) {
+void render320x200x2(IMAGE* image, PCCORE* pccore) {
     int y, x;
     int is_odd, scanline_index, bank_offset, line_offset, byte_index, bit_shift;
     unsigned char pixel_byte;
@@ -26,11 +26,11 @@ void render320x200x2(IMAGE* image, PCCORE pccore) {
     
     // Pointer to the start of the CGA video RAM
     // (Assuming it's at 0xB8000 in the main memory map)
-    unsigned char* vram = &pccore.memory[CGA_VIDEO_RAM_START];
+    unsigned char* vram = &pccore->memory[CGA_VIDEO_RAM_START];
     
     // Get the color register value from the I/O ports
     // (Assuming it's at 0x3D9)
-    unsigned char color_reg = pccore.port[CGA_COLOR_REGISTER_PORT];
+    unsigned char color_reg = pccore->port[CGA_COLOR_REGISTER_PORT];
 
     // --- Add border definitions ---
     const int border_size = CGA_BORDER;
@@ -135,7 +135,7 @@ void render320x200x2(IMAGE* image, PCCORE pccore) {
  * @param image  Pointer to the output image buffer.
  * @param pccore A const pointer to the PC core state.
  */
-void render640x200x1(IMAGE* image, PCCORE pccore) {
+void render640x200x1(IMAGE* image, PCCORE* pccore) {
     int y, x;
     int is_odd, scanline_index, bank_offset, line_offset, byte_index, bit_shift;
     unsigned char pixel_byte;
@@ -152,10 +152,10 @@ void render640x200x1(IMAGE* image, PCCORE pccore) {
     unsigned char* out_pixel = image->raw;
 
     // Pointer to the start of the CGA video RAM
-    unsigned char* vram = &pccore.memory[CGA_VIDEO_RAM_START];
+    unsigned char* vram = &pccore->memory[CGA_VIDEO_RAM_START];
 
     // Get the color register value from the I/O ports
-    unsigned char color_reg = pccore.port[CGA_COLOR_REGISTER_PORT];
+    unsigned char color_reg = pccore->port[CGA_COLOR_REGISTER_PORT];
 
     // 1. Set the output image dimensions
     image->width = final_width;
@@ -238,7 +238,7 @@ void render640x200x1(IMAGE* image, PCCORE pccore) {
  * @param image  Pointer to the output image buffer.
  * @param pccore A const pointer to the PC core state.
  */
-void render320x200x2g(IMAGE* image, PCCORE pccore) {
+void render320x200x2g(IMAGE* image, PCCORE* pccore) {
     int y, x;
     int is_odd, scanline_index, bank_offset, line_offset, byte_index, bit_shift;
     unsigned char pixel_byte;
@@ -251,13 +251,13 @@ void render320x200x2g(IMAGE* image, PCCORE pccore) {
     unsigned char* out_pixel = image->raw;
     
     // Pointer to the start of the CGA video RAM
-    unsigned char* vram = &pccore.memory[CGA_VIDEO_RAM_START];
+    unsigned char* vram = &pccore->memory[CGA_VIDEO_RAM_START];
     
     // Get the color register value from Port 0x3D9 (Background/Border Color)
-    unsigned char color_reg = pccore.port[CGA_COLOR_REGISTER_PORT];
+    unsigned char color_reg = pccore->port[CGA_COLOR_REGISTER_PORT];
 
     // Get the mode control register from Port 0x3D8
-    unsigned char mode_reg = pccore.port[CGA_MODE_CONTROL_PORT];
+    unsigned char mode_reg = pccore->port[CGA_MODE_CONTROL_PORT];
 
     // --- Add border definitions ---
     const int border_size = CGA_BORDER;
@@ -373,7 +373,7 @@ void render320x200x2g(IMAGE* image, PCCORE pccore) {
  * @param image  Pointer to the output image buffer.
  * @param pccore A const pointer to the PC core state.
  */
-void render40x25(IMAGE* image, PCCORE pccore) {
+void render40x25(IMAGE* image, PCCORE* pccore) {
     // --- Constants and Setup ---
     const int COLS = 40;
     const int ROWS = 25;
@@ -387,16 +387,16 @@ void render40x25(IMAGE* image, PCCORE pccore) {
     const int final_height = active_height + (border_size * 2);
     
     // Pointer to video RAM (starts at 0xB8000)
-    unsigned char* vram = &pccore.memory[CGA_VIDEO_RAM_START];
+    unsigned char* vram = &pccore->memory[CGA_VIDEO_RAM_START];
     
     // Pointer to output buffer
     unsigned char* out_pixel = image->raw;
     
     // Get the Color Select Register (3D9)
-    unsigned char color_reg = pccore.port[CGA_COLOR_REGISTER_PORT];
+    unsigned char color_reg = pccore->port[CGA_COLOR_REGISTER_PORT];
     
     // Get the Mode Select Register (3D8)
-    unsigned char mode_reg = pccore.port[CGA_MODE_CONTROL_PORT];
+    unsigned char mode_reg = pccore->port[CGA_MODE_CONTROL_PORT];
 
     // Check bit 2 (0x04) of 3D9 - Color Burst Enable/Disable
     // 0 = Color burst enabled (use color palette), 1 = Color burst disabled (grayscale)
@@ -416,7 +416,7 @@ void render40x25(IMAGE* image, PCCORE pccore) {
     
     // Determine if the blink effect should be applied for this frame
     // This is true if global blink is enabled AND the core's blink phase is 1.
-    int blink_active_this_frame = global_blink_enabled && (pccore.blink == 1);
+    int blink_active_this_frame = global_blink_enabled && (pccore->blink == 1);
     
     // Set image dimensions
     image->width = final_width;
@@ -512,7 +512,7 @@ void render40x25(IMAGE* image, PCCORE pccore) {
  * @param image  Pointer to the output image buffer.
  * @param pccore A const pointer to the PC core state.
  */
-void render80x25(IMAGE* image, PCCORE pccore) {
+void render80x25(IMAGE* image, PCCORE* pccore) {
     // --- Constants and Setup ---
     const int COLS = 80;
     const int ROWS = 25;
@@ -526,16 +526,16 @@ void render80x25(IMAGE* image, PCCORE pccore) {
     const int final_height = active_height + (border_size * 2);
     
     // Pointer to video RAM (starts at 0xB8000)
-    unsigned char* vram = &pccore.memory[CGA_VIDEO_RAM_START];
+    unsigned char* vram = &pccore->memory[CGA_VIDEO_RAM_START];
     
     // Pointer to output buffer
     unsigned char* out_pixel = image->raw;
     
     // Get the Color Select Register (0x3D9)
-    unsigned char color_reg = pccore.port[CGA_COLOR_REGISTER_PORT];
+    unsigned char color_reg = pccore->port[CGA_COLOR_REGISTER_PORT];
     
     // Get the Mode Select Register (0x3D8)
-    unsigned char mode_reg = pccore.port[CGA_MODE_CONTROL_PORT];
+    unsigned char mode_reg = pccore->port[CGA_MODE_CONTROL_PORT];
 
     // --- Palette Selection (Controlled by 0x3D8 Bit 2) ---
     // Check Bit 2 (0x04) of 0x3D8: 1 = B/W (Grayscale), 0 = Color
@@ -557,7 +557,7 @@ void render80x25(IMAGE* image, PCCORE pccore) {
     int global_blink_enabled = (mode_reg & 0x20) != 0;
     
     // Determine if the blink effect should be applied for this frame
-    int blink_active_this_frame = global_blink_enabled && (pccore.blink == 1);
+    int blink_active_this_frame = global_blink_enabled && (pccore->blink == 1);
     
     // Set image dimensions
     image->width = final_width;

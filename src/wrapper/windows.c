@@ -1,15 +1,13 @@
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/timeb.h>
-
+#include <time.h>
 #include "../pccore/pccore.h"
 #include "../pccore/cga.h"
 #include "windows_keyboard.h"
 
-extern int dos_main(int argc, char *argv[]);
-
 // Forward declarations
+extern int dos_main(int argc, char *argv[]);
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 DWORD WINAPI DOSThreadFunction(LPVOID lpParam);
 
@@ -23,211 +21,251 @@ typedef struct {
 
 // Global state
 static HWND g_hwnd = NULL;
-static IMAGE imageBuffer;
-static HDC g_backBufferDC = NULL;
-static HBITMAP g_backBufferBitmap = NULL;
-static unsigned char *g_scaledBuffer = NULL;
-static size_t g_scaledBufferSize = 0;
-static int g_currentScale = 2;
-static BOOL g_isFullscreen = FALSE;
-static RECT g_savedWindowRect;
-static LONG g_savedWindowStyle;
-static int g_savedScale = 2;
+extern PCCORE* pccore;
+IMAGE *imageBuffer;
+static HDC g_hdcMem = NULL;
+static HBITMAP g_hBitmap = NULL;
+static unsigned char *g_bitmapBits = NULL;
+static int g_bitmapWidth = 0;
+static int g_bitmapHeight = 0;
+
+// Scaling and fullscreen state
+static int currentScale = 2;
+static BOOL isFullscreen = FALSE;
+static WINDOWPLACEMENT savedWindowPlacement = {sizeof(WINDOWPLACEMENT)};
+static int savedScale = 2;
 
 // Blinking state
 static const int FRAMES_PER_BLINK_HALF_CYCLE = 8;
 static int blinkFrameCounter = 0;
 
 // DOS thread
-static HANDLE g_dosThread = NULL;
-static DOSThreadData *g_dosData = NULL;
+static HANDLE dosThread = NULL;
+static DOSThreadData *dosData = NULL;
 
-// Window class name
-static const char* WINDOW_CLASS_NAME = "PCCoreEmulatorWindow";
+// Menu item IDs
+static HMENU g_hScaleMenu = NULL;
 
-/**
- * @brief Scale the pixel buffer using nearest-neighbor
- */
-void ScalePixelBuffer(int scale) {
-    if (imageBuffer.raw == NULL || imageBuffer.width == 0 || imageBuffer.height == 0) {
+// Function to create a DIB section for rendering
+static void CreateRenderBuffer(int width, int height) {
+    if (g_hdcMem) {
+        if (g_hBitmap) {
+            DeleteObject(g_hBitmap);
+            g_hBitmap = NULL;
+        }
+        DeleteDC(g_hdcMem);
+        g_hdcMem = NULL;
+    }
+    
+    HDC hdcScreen = GetDC(NULL);
+    g_hdcMem = CreateCompatibleDC(hdcScreen);
+    
+    BITMAPINFO bmi = {0};
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = width;
+    bmi.bmiHeader.biHeight = -height; // Negative for top-down DIB
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 24;
+    bmi.bmiHeader.biCompression = BI_RGB;
+    
+    g_hBitmap = CreateDIBSection(g_hdcMem, &bmi, DIB_RGB_COLORS, 
+                                 (void**)&g_bitmapBits, NULL, 0);
+    SelectObject(g_hdcMem, g_hBitmap);
+    
+    g_bitmapWidth = width;
+    g_bitmapHeight = height;
+    
+    ReleaseDC(NULL, hdcScreen);
+}
+
+// Scale the image buffer to the target size
+static void ScaleImageBuffer(void) {
+    if (imageBuffer->raw == NULL || imageBuffer->width == 0 || imageBuffer->height == 0) {
         return;
     }
     
-    int srcWidth = imageBuffer.width;
-    int srcHeight = imageBuffer.height;
-    int effectiveScaleY = scale * (int)imageBuffer.aspect_ratio;
-    
-    int dstWidth = srcWidth * scale;
+    int srcWidth = imageBuffer->width;
+    int srcHeight = imageBuffer->height;
+    int effectiveScaleY = currentScale * (int)imageBuffer->aspect_ratio;
+    int dstWidth = srcWidth * currentScale;
     int dstHeight = srcHeight * effectiveScaleY;
     
-    size_t requiredSize = dstWidth * dstHeight * 4; // RGBA
-    
-    if (g_scaledBuffer == NULL || g_scaledBufferSize != requiredSize) {
-        if (g_scaledBuffer) {
-            free(g_scaledBuffer);
-        }
-        g_scaledBuffer = (unsigned char *)malloc(requiredSize);
-        g_scaledBufferSize = requiredSize;
+    // Create buffer if needed
+    if (g_bitmapWidth != dstWidth || g_bitmapHeight != dstHeight) {
+        CreateRenderBuffer(dstWidth, dstHeight);
     }
     
-    unsigned char *src = imageBuffer.raw;
+    if (g_bitmapBits == NULL) {
+        return;
+    }
     
+    unsigned char *src = imageBuffer->raw;
+    
+    // Nearest-neighbor scaling
     for (int dstY = 0; dstY < dstHeight; dstY++) {
         int srcY = dstY / effectiveScaleY;
         for (int dstX = 0; dstX < dstWidth; dstX++) {
-            int srcX = dstX / scale;
+            int srcX = dstX / currentScale;
             int srcIndex = (srcY * srcWidth + srcX) * 3;
-            int dstIndex = (dstY * dstWidth + dstX) * 4;
+            int dstIndex = (dstY * dstWidth + dstX) * 3;
             
-            // Convert RGB to BGRA for Windows
-            g_scaledBuffer[dstIndex + 0] = src[srcIndex + 2]; // B
-            g_scaledBuffer[dstIndex + 1] = src[srcIndex + 1]; // G
-            g_scaledBuffer[dstIndex + 2] = src[srcIndex + 0]; // R
-            g_scaledBuffer[dstIndex + 3] = 255;                // A
+            // BGR format for Windows
+            g_bitmapBits[dstIndex + 0] = src[srcIndex + 2]; // B
+            g_bitmapBits[dstIndex + 1] = src[srcIndex + 1]; // G
+            g_bitmapBits[dstIndex + 2] = src[srcIndex + 0]; // R
         }
     }
 }
 
-/**
- * @brief Render the frame to the window
- */
-void RenderFrame(HDC hdc, int width, int height) {
+// Paint function
+static void OnPaint(HWND hwnd) {
+    PAINTSTRUCT ps;
+    HDC hdc = BeginPaint(hwnd, &ps);
+    
     // Fill background with black
     RECT clientRect;
-    GetClientRect(g_hwnd, &clientRect);
+    GetClientRect(hwnd, &clientRect);
     FillRect(hdc, &clientRect, (HBRUSH)GetStockObject(BLACK_BRUSH));
     
-    if (imageBuffer.raw == NULL || imageBuffer.width == 0 || imageBuffer.height == 0) {
-        return;
+    if (g_hdcMem && g_hBitmap && g_bitmapWidth > 0 && g_bitmapHeight > 0) {
+        // Calculate centering offsets
+        int viewWidth = clientRect.right - clientRect.left;
+        int viewHeight = clientRect.bottom - clientRect.top;
+        int xOffset = (viewWidth - g_bitmapWidth) / 2;
+        int yOffset = (viewHeight - g_bitmapHeight) / 2;
+        
+        // Set stretch mode for nearest-neighbor
+        SetStretchBltMode(hdc, COLORONCOLOR);
+        
+        // Draw centered
+        BitBlt(hdc, xOffset, yOffset, g_bitmapWidth, g_bitmapHeight, 
+               g_hdcMem, 0, 0, SRCCOPY);
     }
     
-    ScalePixelBuffer(g_currentScale);
-    
-    if (g_scaledBuffer == NULL) {
-        return;
-    }
-    
-    int srcWidth = imageBuffer.width;
-    int srcHeight = imageBuffer.height;
-    int dstWidth = srcWidth * g_currentScale;
-    int dstHeight = srcHeight * g_currentScale * (int)imageBuffer.aspect_ratio;
-    
-    // Create bitmap info
-    BITMAPINFO bmi;
-    ZeroMemory(&bmi, sizeof(BITMAPINFO));
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = dstWidth;
-    bmi.bmiHeader.biHeight = -dstHeight; // Negative for top-down
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB;
-    
-    // Calculate centering offsets
-    int xOffset = (clientRect.right - dstWidth) / 2;
-    int yOffset = (clientRect.bottom - dstHeight) / 2;
-    
-    // Draw the bitmap
-    SetStretchBltMode(hdc, COLORONCOLOR);
-    StretchDIBits(hdc, xOffset, yOffset, dstWidth, dstHeight,
-                  0, 0, dstWidth, dstHeight,
-                  g_scaledBuffer, &bmi, DIB_RGB_COLORS, SRCCOPY);
+    EndPaint(hwnd, &ps);
 }
 
-/**
- * @brief Set the window scale
- */
-void SetScale(int scale, BOOL resizeWindow) {
-    g_currentScale = scale;
+// Update menu checkmarks
+static void UpdateMenuCheckmarks(int selectedScale) {
+    if (g_hScaleMenu) {
+        CheckMenuItem(g_hScaleMenu, 1001, MF_UNCHECKED);
+        CheckMenuItem(g_hScaleMenu, 1002, MF_UNCHECKED);
+        CheckMenuItem(g_hScaleMenu, 1003, MF_UNCHECKED);
+        CheckMenuItem(g_hScaleMenu, 1004, MF_UNCHECKED);
+        CheckMenuItem(g_hScaleMenu, 1000 + selectedScale, MF_CHECKED);
+    }
+}
+
+// Set scale and optionally resize window
+static void SetScale(int scale, BOOL resizeWindow) {
+    currentScale = scale;
+    UpdateMenuCheckmarks(scale);
     
-    if (resizeWindow && !g_isFullscreen) {
-        int baseWidth = imageBuffer.width;
-        int baseHeight = imageBuffer.height;
+    if (resizeWindow && !isFullscreen && g_hwnd) {
+        int baseWidth = imageBuffer->width;
+        int baseHeight = imageBuffer->height;
         
-        int newWidth = baseWidth * scale;
-        int newHeight = baseHeight * scale * (int)imageBuffer.aspect_ratio;
-        
-        // Calculate window size including borders
-        RECT rect = {0, 0, newWidth, newHeight};
-        DWORD style = GetWindowLong(g_hwnd, GWL_STYLE);
-        DWORD exStyle = GetWindowLong(g_hwnd, GWL_EXSTYLE);
-        AdjustWindowRectEx(&rect, style, TRUE, exStyle);
-        
-        int windowWidth = rect.right - rect.left;
-        int windowHeight = rect.bottom - rect.top;
-        
-        // Center window
-        RECT workArea;
-        SystemParametersInfo(SPI_GETWORKAREA, 0, &workArea, 0);
-        int x = (workArea.right - windowWidth) / 2;
-        int y = (workArea.bottom - windowHeight) / 2;
-        
-        SetWindowPos(g_hwnd, NULL, x, y, windowWidth, windowHeight, 
-                     SWP_NOZORDER | SWP_FRAMECHANGED);
+        if (baseWidth > 0 && baseHeight > 0) {
+            int newWidth = baseWidth * scale;
+            int newHeight = baseHeight * scale * (int)imageBuffer->aspect_ratio;
+            
+            RECT rect = {0, 0, newWidth, newHeight};
+            AdjustWindowRect(&rect, GetWindowLong(g_hwnd, GWL_STYLE), TRUE);
+            
+            SetWindowPos(g_hwnd, NULL, 0, 0, 
+                        rect.right - rect.left, 
+                        rect.bottom - rect.top,
+                        SWP_NOMOVE | SWP_NOZORDER);
+        }
     }
     
-    InvalidateRect(g_hwnd, NULL, FALSE);
+    if (g_hwnd) {
+        InvalidateRect(g_hwnd, NULL, TRUE);
+    }
     printf("Scale set to %dx\n", scale);
 }
 
-/**
- * @brief Toggle fullscreen mode
- */
-void ToggleFullscreen(void) {
-    if (g_isFullscreen) {
+// Toggle fullscreen
+static void ToggleFullscreen(void) {
+    if (!g_hwnd) return;
+    
+    if (isFullscreen) {
         // Exit fullscreen
-        SetWindowLong(g_hwnd, GWL_STYLE, g_savedWindowStyle);
-        SetWindowPos(g_hwnd, HWND_NOTOPMOST, 
-                     g_savedWindowRect.left, g_savedWindowRect.top,
-                     g_savedWindowRect.right - g_savedWindowRect.left,
-                     g_savedWindowRect.bottom - g_savedWindowRect.top,
-                     SWP_FRAMECHANGED);
-        
-        g_currentScale = g_savedScale;
-        g_isFullscreen = FALSE;
-        
+        SetWindowLong(g_hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE);
+        SetWindowPlacement(g_hwnd, &savedWindowPlacement);
+        SetScale(savedScale, FALSE);
+        isFullscreen = FALSE;
     } else {
         // Enter fullscreen
-        GetWindowRect(g_hwnd, &g_savedWindowRect);
-        g_savedWindowStyle = GetWindowLong(g_hwnd, GWL_STYLE);
-        g_savedScale = g_currentScale;
+        savedScale = currentScale;
+        GetWindowPlacement(g_hwnd, &savedWindowPlacement);
         
-        // Get monitor info
         HMONITOR hMonitor = MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTOPRIMARY);
         MONITORINFO mi = {sizeof(MONITORINFO)};
         GetMonitorInfo(hMonitor, &mi);
         
-        // Calculate best scale
-        int baseW = imageBuffer.width;
-        int baseH = imageBuffer.height * (int)imageBuffer.aspect_ratio;
+        int screenWidth = mi.rcMonitor.right - mi.rcMonitor.left;
+        int screenHeight = mi.rcMonitor.bottom - mi.rcMonitor.top;
+        
+        int baseW = imageBuffer->width;
+        int baseH = imageBuffer->height * (int)imageBuffer->aspect_ratio;
         
         if (baseW > 0 && baseH > 0) {
-            int screenWidth = mi.rcMonitor.right - mi.rcMonitor.left;
-            int screenHeight = mi.rcMonitor.bottom - mi.rcMonitor.top;
-            
             int maxScaleX = screenWidth / baseW;
             int maxScaleY = screenHeight / baseH;
             int bestScale = (maxScaleX < maxScaleY) ? maxScaleX : maxScaleY;
             if (bestScale < 1) bestScale = 1;
             
-            g_currentScale = bestScale;
-            
-            // Remove window decorations and maximize
             SetWindowLong(g_hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
-            SetWindowPos(g_hwnd, HWND_TOPMOST,
-                         mi.rcMonitor.left, mi.rcMonitor.top,
-                         screenWidth, screenHeight,
-                         SWP_FRAMECHANGED);
+            SetWindowPos(g_hwnd, HWND_TOP, 
+                        mi.rcMonitor.left, mi.rcMonitor.top,
+                        screenWidth, screenHeight,
+                        SWP_FRAMECHANGED);
             
-            g_isFullscreen = TRUE;
+            SetScale(bestScale, FALSE);
+            isFullscreen = TRUE;
+        }
+    }
+}
+
+// Render and update function (called by timer)
+static void RenderAndUpdate(void) {
+    int oldWidth = imageBuffer->width;
+    int oldHeight = imageBuffer->height;
+    
+    // Update time in milliseconds
+    DWORD currentTime = GetTickCount();
+    pccore->time = (long long)currentTime;
+    
+    // Update blink
+    blinkFrameCounter++;
+    if (blinkFrameCounter >= FRAMES_PER_BLINK_HALF_CYCLE) {
+        pccore->blink = 1 - pccore->blink;
+        blinkFrameCounter = 0;
+    }
+    
+    // Render
+    render(imageBuffer, pccore);
+
+    // Check if resolution changed
+    if (imageBuffer->width != oldWidth || imageBuffer->height != oldHeight) {
+        if (isFullscreen) {
+            ToggleFullscreen();
+            ToggleFullscreen();
+        } else {
+            SetScale(currentScale, TRUE);
         }
     }
     
-    InvalidateRect(g_hwnd, NULL, FALSE);
+    if (imageBuffer->width > 0 && imageBuffer->height > 0) {
+        ScaleImageBuffer();
+        if (g_hwnd) {
+            InvalidateRect(g_hwnd, NULL, FALSE);
+        }
+    }
 }
 
-/**
- * @brief DOS thread function
- */
+// DOS thread function
 DWORD WINAPI DOSThreadFunction(LPVOID lpParam) {
     DOSThreadData *data = (DOSThreadData *)lpParam;
     printf("DOS thread started with %d arguments\n", data->argc);
@@ -237,258 +275,214 @@ DWORD WINAPI DOSThreadFunction(LPVOID lpParam) {
     return 0;
 }
 
-/**
- * @brief Window procedure
- */
+// Window procedure
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
         case WM_CREATE:
-            SetTimer(hwnd, 1, 1000/60, NULL); // 60 FPS timer
+            g_hwnd = hwnd;
             return 0;
             
         case WM_DESTROY:
-            KillTimer(hwnd, 1);
             PostQuitMessage(0);
             return 0;
             
-        case WM_PAINT: {
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hwnd, &ps);
-            RenderFrame(hdc, ps.rcPaint.right, ps.rcPaint.bottom);
-            EndPaint(hwnd, &ps);
-            return 0;
-        }
-        
-        case WM_TIMER:
-            if (wParam == 1) {
-                // Update time
-                struct _timeb tb;
-                _ftime(&tb);
-                pccore.time = (long long)tb.time * 1000LL + tb.millitm;
-                
-                // Update blink
-                blinkFrameCounter++;
-                if (blinkFrameCounter >= FRAMES_PER_BLINK_HALF_CYCLE) {
-                    pccore.blink = 1 - pccore.blink;
-                    blinkFrameCounter = 0;
-                }
-                
-                // Render
-                int oldWidth = imageBuffer.width;
-                int oldHeight = imageBuffer.height;
-                
-                render(&imageBuffer, pccore);
-                
-                // Handle resolution changes
-                if (imageBuffer.width != oldWidth || imageBuffer.height != oldHeight) {
-                    if (g_isFullscreen) {
-                        ToggleFullscreen();
-                        ToggleFullscreen();
-                    } else {
-                        SetScale(g_currentScale, TRUE);
-                    }
-                }
-                
-                InvalidateRect(hwnd, NULL, FALSE);
-            }
+        case WM_PAINT:
+            OnPaint(hwnd);
             return 0;
             
         case WM_KEYDOWN:
-        case WM_SYSKEYDOWN: {
-            if (wParam == VK_F11 || (wParam == 'F' && (GetAsyncKeyState(VK_CONTROL) & 0x8000))) {
-                ToggleFullscreen();
-                return 0;
+        case WM_SYSKEYDOWN:
+            if (!(lParam & 0x40000000)) { // Not a repeat
+                // Check for Ctrl+F (fullscreen toggle)
+                if ((GetKeyState(VK_CONTROL) & 0x8000) && wParam == 'F') {
+                    ToggleFullscreen();
+                    return 0;
+                }
+                
+                pccore->key = get_scancode(wParam, lParam);
+                pccore->memory[BDA_KBD_STATUS_1] = get_statuscode();
+                printf("Key pressed: 0x%x 0x%x\n", pccore->key, pccore->memory[BDA_KBD_STATUS_1]);
             }
-            
-            BYTE keyboardState[256];
-            GetKeyboardState(keyboardState);
-            
-            pccore.key = get_scancode(wParam, lParam, keyboardState);
-            pccore.memory[BDA_KBD_STATUS_1] = get_statuscode(keyboardState);
-            printf("Key pressed: 0x%x 0x%x\n", pccore.key, pccore.memory[BDA_KBD_STATUS_1]);
             return 0;
-        }
-        
+            
         case WM_KEYUP:
-        case WM_SYSKEYUP: {
-            BYTE keyboardState[256];
-            GetKeyboardState(keyboardState);
-            
-            int scancode = get_scancode(wParam, lParam, keyboardState);
-            pccore.memory[BDA_KBD_STATUS_1] = get_statuscode(keyboardState);
-            
-            if (pccore.key == scancode) {
-                pccore.key = 0;
+        case WM_SYSKEYUP:
+            pccore->memory[BDA_KBD_STATUS_1] = get_statuscode();
+            if (pccore->key == get_scancode(wParam, lParam)) {
+                pccore->key = 0;
                 printf("Key released\n");
             }
             return 0;
-        }
-        
-        case WM_COMMAND: {
-            int wmId = LOWORD(wParam);
-            switch (wmId) {
-                case 1001: SetScale(1, !g_isFullscreen); return 0;
-                case 1002: SetScale(2, !g_isFullscreen); return 0;
-                case 1003: SetScale(3, !g_isFullscreen); return 0;
-                case 1004: SetScale(4, !g_isFullscreen); return 0;
-                case 1010: ToggleFullscreen(); return 0;
-                case 1020: PostQuitMessage(0); return 0;
+            
+        case WM_COMMAND:
+            switch (LOWORD(wParam)) {
+                case 1001: SetScale(1, !isFullscreen); return 0;
+                case 1002: SetScale(2, !isFullscreen); return 0;
+                case 1003: SetScale(3, !isFullscreen); return 0;
+                case 1004: SetScale(4, !isFullscreen); return 0;
+                case 1005: ToggleFullscreen(); return 0;
             }
             break;
-        }
+            
+        case WM_CLOSE:
+            DestroyWindow(hwnd);
+            return 0;
     }
     
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
 
-/**
- * @brief Create the menu bar
- */
-void CreateMenuBar(HWND hwnd) {
-    HMENU hMenuBar = CreateMenu();
-    
-    // View Menu
-    HMENU hViewMenu = CreateMenu();
-    AppendMenu(hViewMenu, MF_STRING, 1010, "Toggle Full Screen\tF11");
-    AppendMenu(hViewMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenu(hViewMenu, MF_STRING, 1001, "1x Scale\tCtrl+1");
-    AppendMenu(hViewMenu, MF_STRING | MF_CHECKED, 1002, "2x Scale\tCtrl+2");
-    AppendMenu(hViewMenu, MF_STRING, 1003, "3x Scale\tCtrl+3");
-    AppendMenu(hViewMenu, MF_STRING, 1004, "4x Scale\tCtrl+4");
-    AppendMenu(hMenuBar, MF_POPUP, (UINT_PTR)hViewMenu, "View");
-    
-    // File Menu (for Quit)
-    HMENU hFileMenu = CreateMenu();
-    AppendMenu(hFileMenu, MF_STRING, 1020, "Quit\tAlt+F4");
-    AppendMenu(hMenuBar, MF_POPUP, (UINT_PTR)hFileMenu, "File");
-    
-    SetMenu(hwnd, hMenuBar);
+// Timer callback
+VOID CALLBACK TimerProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime) {
+    (void)hwnd;
+    (void)uMsg;
+    (void)idEvent;
+    (void)dwTime;
+    RenderAndUpdate();
 }
 
-/**
- * @brief Initialize pccore
- */
-void SetupPCCore(void) {
-    memset(&pccore, 0, sizeof(PCCORE));
-    pccore.mode = CGA320x200x2;
-    pccore.key = 0;
-    pccore.port[CGA_COLOR_REGISTER_PORT] = 0x20 | 0x10 | 0x01;
-    render(&imageBuffer, pccore);
-}
-
-/**
- * @brief Start the DOS thread
- */
-void StartDOSThread(void) {
-    g_dosData = (DOSThreadData *)malloc(sizeof(DOSThreadData));
-    g_dosData->finished = FALSE;
-    g_dosData->result = 0;
-    
-    // Get command line arguments
-    int argc = __argc;
-    char **argv = __argv;
-    
-    g_dosData->argc = argc;
-    g_dosData->argv = (char **)malloc(sizeof(char *) * (argc + 1));
-    
-    for (int i = 0; i < argc; i++) {
-        g_dosData->argv[i] = _strdup(argv[i]);
-    }
-    g_dosData->argv[argc] = NULL;
-    
-    g_dosThread = CreateThread(NULL, 0, DOSThreadFunction, g_dosData, 0, NULL);
-    if (g_dosThread == NULL) {
-        printf("Error creating DOS thread\n");
-        free(g_dosData);
-        g_dosData = NULL;
-    }
-}
-
-/**
- * @brief WinMain entry point
- */
+// WinMain entry point
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
                    LPSTR lpCmdLine, int nCmdShow) {
+    (void)hPrevInstance;
+    (void)lpCmdLine;
     
-    // Register window class
-    WNDCLASS wc = {0};
-    wc.lpfnWndProc = WindowProc;
-    wc.hInstance = hInstance;
-    wc.lpszClassName = WINDOW_CLASS_NAME;
-    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    // Allocate console for debugging
+    AllocConsole();
+    freopen("CONOUT$", "w", stdout);
+    freopen("CONOUT$", "w", stderr);
     
-    if (!RegisterClass(&wc)) {
-        MessageBox(NULL, "Window Registration Failed!", "Error", MB_ICONERROR);
+    printf("PC Core Emulator Starting...\n");
+    
+    // Initialize pccore
+    pccore = malloc(sizeof(PCCORE));
+    pccore->mode = CGA40x25;
+    pccore->key = 0;
+    pccore->port[CGA_COLOR_REGISTER_PORT] = 0x20 | 0x10 | 0x01;
+    
+    imageBuffer = malloc(sizeof(IMAGE));
+
+    imageBuffer->width = 320;
+    imageBuffer->height = 200;
+    imageBuffer->aspect_ratio = 1.0f;
+
+    printf("Rendering initial frame...\n");
+    render(imageBuffer, pccore);
+    printf("Image buffer: %dx%d\n", imageBuffer->width, imageBuffer->height);
+    
+    if (imageBuffer->width == 0 || imageBuffer->height == 0) {
+        MessageBox(NULL, "Failed to initialize image buffer", "Error", MB_OK | MB_ICONERROR);
         return 1;
     }
     
-    // Initialize pccore
-    SetupPCCore();
+    // Register window class
+    WNDCLASSEX wc = {0};
+    wc.cbSize = sizeof(WNDCLASSEX);
+    wc.lpfnWndProc = WindowProc;
+    wc.hInstance = hInstance;
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    wc.lpszClassName = "PCCoreEmulator";
+    wc.lpszMenuName = NULL;
     
-    // Calculate initial window size
-    int baseWidth = imageBuffer.width;
-    int baseHeight = imageBuffer.height;
-    int windowWidth = baseWidth * g_currentScale;
-    int windowHeight = baseHeight * g_currentScale * (int)imageBuffer.aspect_ratio;
+    if (!RegisterClassEx(&wc)) {
+        MessageBox(NULL, "Window Registration Failed!", "Error", MB_OK | MB_ICONERROR);
+        return 1;
+    }
+    
+    // Create menu
+    HMENU hMenu = CreateMenu();
+    HMENU hViewMenu = CreatePopupMenu();
+    AppendMenu(hViewMenu, MF_STRING, 1005, "Toggle Full Screen\tCtrl+F");
+    AppendMenu(hViewMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hViewMenu, MF_STRING, 1001, "1x Scale\t1");
+    AppendMenu(hViewMenu, MF_STRING | MF_CHECKED, 1002, "2x Scale\t2");
+    AppendMenu(hViewMenu, MF_STRING, 1003, "3x Scale\t3");
+    AppendMenu(hViewMenu, MF_STRING, 1004, "4x Scale\t4");
+    AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hViewMenu, "View");
+    g_hScaleMenu = hViewMenu;
+    
+    // Calculate window size
+    int baseWidth = imageBuffer->width;
+    int baseHeight = imageBuffer->height;
+    int windowWidth = baseWidth * currentScale;
+    int windowHeight = baseHeight * currentScale * (int)imageBuffer->aspect_ratio;
+    
+    printf("Window size: %dx%d\n", windowWidth, windowHeight);
     
     RECT rect = {0, 0, windowWidth, windowHeight};
-    AdjustWindowRectEx(&rect, WS_OVERLAPPEDWINDOW, TRUE, 0);
-    
-    windowWidth = rect.right - rect.left;
-    windowHeight = rect.bottom - rect.top;
-    
-    // Center window
-    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-    int x = (screenWidth - windowWidth) / 2;
-    int y = (screenHeight - windowHeight) / 2;
+    AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, TRUE);
     
     // Create window
     g_hwnd = CreateWindowEx(
         0,
-        WINDOW_CLASS_NAME,
+        "PCCoreEmulator",
         "PC Core Emulator",
         WS_OVERLAPPEDWINDOW,
-        x, y, windowWidth, windowHeight,
-        NULL, NULL, hInstance, NULL
+        CW_USEDEFAULT, CW_USEDEFAULT,
+        rect.right - rect.left,
+        rect.bottom - rect.top,
+        NULL,
+        hMenu,
+        hInstance,
+        NULL
     );
     
-    if (g_hwnd == NULL) {
-        MessageBox(NULL, "Window Creation Failed!", "Error", MB_ICONERROR);
+    if (!g_hwnd) {
+        MessageBox(NULL, "Window Creation Failed!", "Error", MB_OK | MB_ICONERROR);
         return 1;
     }
     
-    CreateMenuBar(g_hwnd);
+    printf("Window created successfully\n");
+    
+    // Show window
     ShowWindow(g_hwnd, nCmdShow);
     UpdateWindow(g_hwnd);
     
+    // Do initial render
+    ScaleImageBuffer();
+    InvalidateRect(g_hwnd, NULL, TRUE);
+    
     // Start DOS thread
-    StartDOSThread();
+    dosData = (DOSThreadData *)malloc(sizeof(DOSThreadData));
+    dosData->finished = FALSE;
+    dosData->result = 0;
+    dosData->argc = __argc;
+    dosData->argv = __argv;
+    
+    dosThread = CreateThread(NULL, 0, DOSThreadFunction, dosData, 0, NULL);
+    if (!dosThread) {
+        printf("Warning: Failed to create DOS thread\n");
+    }
+    
+    // Set up timer for 60 FPS
+    SetTimer(g_hwnd, 1, 1000 / 60, TimerProc);
+    
+    printf("Entering message loop...\n");
     
     // Message loop
-    MSG msg = {0};
+    MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
     
+    printf("Exiting...\n");
+    
     // Cleanup
-    if (g_dosThread) {
-        WaitForSingleObject(g_dosThread, INFINITE);
-        CloseHandle(g_dosThread);
+    KillTimer(g_hwnd, 1);
+    if (dosThread) {
+        TerminateThread(dosThread, 0);
+        CloseHandle(dosThread);
     }
-    
-    if (g_dosData) {
-        for (int i = 0; i < g_dosData->argc; i++) {
-            free(g_dosData->argv[i]);
-        }
-        free(g_dosData->argv);
-        free(g_dosData);
+    if (dosData) {
+        free(dosData);
     }
-    
-    if (g_scaledBuffer) {
-        free(g_scaledBuffer);
+    if (g_hdcMem) {
+        DeleteDC(g_hdcMem);
+    }
+    if (g_hBitmap) {
+        DeleteObject(g_hBitmap);
     }
     
     return (int)msg.wParam;
