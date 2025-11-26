@@ -126,7 +126,7 @@ pccore: cmake_check_build_system
 
 # fast build rule for target.
 pccore/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/build
+	$(MAKE) $(MAKESILENT) -f wrapper/CMakeFiles/pccore.dir/build.make wrapper/CMakeFiles/pccore.dir/build
 .PHONY : pccore/fast
 
 #=============================================================================
@@ -139,216 +139,21 @@ matrix: cmake_check_build_system
 
 # fast build rule for target.
 matrix/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/matrix.dir/build.make CMakeFiles/matrix.dir/build
+	$(MAKE) $(MAKESILENT) -f samples/CMakeFiles/matrix.dir/build.make samples/CMakeFiles/matrix.dir/build
 .PHONY : matrix/fast
 
-pccore/cga.o: pccore/cga.c.o
-.PHONY : pccore/cga.o
+#=============================================================================
+# Target rules for targets named fire
 
-# target to build an object file
-pccore/cga.c.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/pccore/cga.c.o
-.PHONY : pccore/cga.c.o
+# Build rule for target.
+fire: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 fire
+.PHONY : fire
 
-pccore/cga.i: pccore/cga.c.i
-.PHONY : pccore/cga.i
-
-# target to preprocess a source file
-pccore/cga.c.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/pccore/cga.c.i
-.PHONY : pccore/cga.c.i
-
-pccore/cga.s: pccore/cga.c.s
-.PHONY : pccore/cga.s
-
-# target to generate assembly for a file
-pccore/cga.c.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/pccore/cga.c.s
-.PHONY : pccore/cga.c.s
-
-pccore/cgafont.o: pccore/cgafont.c.o
-.PHONY : pccore/cgafont.o
-
-# target to build an object file
-pccore/cgafont.c.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/pccore/cgafont.c.o
-.PHONY : pccore/cgafont.c.o
-
-pccore/cgafont.i: pccore/cgafont.c.i
-.PHONY : pccore/cgafont.i
-
-# target to preprocess a source file
-pccore/cgafont.c.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/pccore/cgafont.c.i
-.PHONY : pccore/cgafont.c.i
-
-pccore/cgafont.s: pccore/cgafont.c.s
-.PHONY : pccore/cgafont.s
-
-# target to generate assembly for a file
-pccore/cgafont.c.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/pccore/cgafont.c.s
-.PHONY : pccore/cgafont.c.s
-
-pccore/pccore.o: pccore/pccore.c.o
-.PHONY : pccore/pccore.o
-
-# target to build an object file
-pccore/pccore.c.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/pccore/pccore.c.o
-.PHONY : pccore/pccore.c.o
-
-pccore/pccore.i: pccore/pccore.c.i
-.PHONY : pccore/pccore.i
-
-# target to preprocess a source file
-pccore/pccore.c.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/pccore/pccore.c.i
-.PHONY : pccore/pccore.c.i
-
-pccore/pccore.s: pccore/pccore.c.s
-.PHONY : pccore/pccore.s
-
-# target to generate assembly for a file
-pccore/pccore.c.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/pccore/pccore.c.s
-.PHONY : pccore/pccore.c.s
-
-samples/matrix.o: samples/matrix.c.o
-.PHONY : samples/matrix.o
-
-# target to build an object file
-samples/matrix.c.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/matrix.dir/build.make CMakeFiles/matrix.dir/samples/matrix.c.o
-.PHONY : samples/matrix.c.o
-
-samples/matrix.i: samples/matrix.c.i
-.PHONY : samples/matrix.i
-
-# target to preprocess a source file
-samples/matrix.c.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/matrix.dir/build.make CMakeFiles/matrix.dir/samples/matrix.c.i
-.PHONY : samples/matrix.c.i
-
-samples/matrix.s: samples/matrix.c.s
-.PHONY : samples/matrix.s
-
-# target to generate assembly for a file
-samples/matrix.c.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/matrix.dir/build.make CMakeFiles/matrix.dir/samples/matrix.c.s
-.PHONY : samples/matrix.c.s
-
-turboc/bios.o: turboc/bios.c.o
-.PHONY : turboc/bios.o
-
-# target to build an object file
-turboc/bios.c.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/turboc/bios.c.o
-.PHONY : turboc/bios.c.o
-
-turboc/bios.i: turboc/bios.c.i
-.PHONY : turboc/bios.i
-
-# target to preprocess a source file
-turboc/bios.c.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/turboc/bios.c.i
-.PHONY : turboc/bios.c.i
-
-turboc/bios.s: turboc/bios.c.s
-.PHONY : turboc/bios.s
-
-# target to generate assembly for a file
-turboc/bios.c.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/turboc/bios.c.s
-.PHONY : turboc/bios.c.s
-
-turboc/conio.o: turboc/conio.c.o
-.PHONY : turboc/conio.o
-
-# target to build an object file
-turboc/conio.c.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/turboc/conio.c.o
-.PHONY : turboc/conio.c.o
-
-turboc/conio.i: turboc/conio.c.i
-.PHONY : turboc/conio.i
-
-# target to preprocess a source file
-turboc/conio.c.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/turboc/conio.c.i
-.PHONY : turboc/conio.c.i
-
-turboc/conio.s: turboc/conio.c.s
-.PHONY : turboc/conio.s
-
-# target to generate assembly for a file
-turboc/conio.c.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/turboc/conio.c.s
-.PHONY : turboc/conio.c.s
-
-turboc/dos.o: turboc/dos.c.o
-.PHONY : turboc/dos.o
-
-# target to build an object file
-turboc/dos.c.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/turboc/dos.c.o
-.PHONY : turboc/dos.c.o
-
-turboc/dos.i: turboc/dos.c.i
-.PHONY : turboc/dos.i
-
-# target to preprocess a source file
-turboc/dos.c.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/turboc/dos.c.i
-.PHONY : turboc/dos.c.i
-
-turboc/dos.s: turboc/dos.c.s
-.PHONY : turboc/dos.s
-
-# target to generate assembly for a file
-turboc/dos.c.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/turboc/dos.c.s
-.PHONY : turboc/dos.c.s
-
-turboc/int10.o: turboc/int10.c.o
-.PHONY : turboc/int10.o
-
-# target to build an object file
-turboc/int10.c.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/turboc/int10.c.o
-.PHONY : turboc/int10.c.o
-
-turboc/int10.i: turboc/int10.c.i
-.PHONY : turboc/int10.i
-
-# target to preprocess a source file
-turboc/int10.c.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/turboc/int10.c.i
-.PHONY : turboc/int10.c.i
-
-turboc/int10.s: turboc/int10.c.s
-.PHONY : turboc/int10.s
-
-# target to generate assembly for a file
-turboc/int10.c.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pccore.dir/build.make CMakeFiles/pccore.dir/turboc/int10.c.s
-.PHONY : turboc/int10.c.s
-
-wrapper/macos.o: wrapper/macos.m.o
-.PHONY : wrapper/macos.o
-
-# target to build an object file
-wrapper/macos.m.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/matrix.dir/build.make CMakeFiles/matrix.dir/wrapper/macos.m.o
-.PHONY : wrapper/macos.m.o
-
-wrapper/macos_keyboard.o: wrapper/macos_keyboard.m.o
-.PHONY : wrapper/macos_keyboard.o
-
-# target to build an object file
-wrapper/macos_keyboard.m.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/matrix.dir/build.make CMakeFiles/matrix.dir/wrapper/macos_keyboard.m.o
-.PHONY : wrapper/macos_keyboard.m.o
+# fast build rule for target.
+fire/fast:
+	$(MAKE) $(MAKESILENT) -f samples/fire/CMakeFiles/fire.dir/build.make samples/fire/CMakeFiles/fire.dir/build
+.PHONY : fire/fast
 
 # Help Target
 help:
@@ -358,34 +163,9 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
+	@echo "... fire"
 	@echo "... matrix"
 	@echo "... pccore"
-	@echo "... pccore/cga.o"
-	@echo "... pccore/cga.i"
-	@echo "... pccore/cga.s"
-	@echo "... pccore/cgafont.o"
-	@echo "... pccore/cgafont.i"
-	@echo "... pccore/cgafont.s"
-	@echo "... pccore/pccore.o"
-	@echo "... pccore/pccore.i"
-	@echo "... pccore/pccore.s"
-	@echo "... samples/matrix.o"
-	@echo "... samples/matrix.i"
-	@echo "... samples/matrix.s"
-	@echo "... turboc/bios.o"
-	@echo "... turboc/bios.i"
-	@echo "... turboc/bios.s"
-	@echo "... turboc/conio.o"
-	@echo "... turboc/conio.i"
-	@echo "... turboc/conio.s"
-	@echo "... turboc/dos.o"
-	@echo "... turboc/dos.i"
-	@echo "... turboc/dos.s"
-	@echo "... turboc/int10.o"
-	@echo "... turboc/int10.i"
-	@echo "... turboc/int10.s"
-	@echo "... wrapper/macos.o"
-	@echo "... wrapper/macos_keyboard.o"
 .PHONY : help
 
 

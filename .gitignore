@@ -71,3 +71,5 @@ src/sample
 src/matrix
 src/samples/sample
 src/Makefile
+src/Makefile
+src/samples/Makefile
