@@ -3,7 +3,9 @@
 
 #include "../pccore/pccore.h"
 
-// typedef long time_t;
+#ifdef MACOS
+typedef long time_t;
+#endif
 
 time_t time(time_t *timer);
 

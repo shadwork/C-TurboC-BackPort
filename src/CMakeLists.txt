@@ -21,6 +21,7 @@ set(PLASMA_NAME plasma)
 
 # Configure WRAPPER_SOURCES based on the operating system
 if(APPLE)
+    add_compile_definitions(MACOS)
     # macOS specific sources (Objective-C files)
     set(WRAPPER_SOURCES
         ${CMAKE_SOURCE_DIR}/wrapper/macos_keyboard.m
