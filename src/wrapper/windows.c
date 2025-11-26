@@ -35,6 +35,9 @@ static BOOL isFullscreen = FALSE;
 static WINDOWPLACEMENT savedWindowPlacement = {sizeof(WINDOWPLACEMENT)};
 static int savedScale = 2;
 
+// Standard window style (No Resize Border, No Maximize button)
+static const DWORD WINDOW_STYLE_WINDOWED = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+
 // Blinking state
 static const int FRAMES_PER_BLINK_HALF_CYCLE = 8;
 static int blinkFrameCounter = 0;
@@ -46,7 +49,7 @@ static DOSThreadData *dosData = NULL;
 // Menu item IDs
 static HMENU g_hScaleMenu = NULL;
 
-// Function to create a DIB section for rendering
+// Function to create a DIB section for rendering (The Emulator's internal buffer)
 static void CreateRenderBuffer(int width, int height) {
     if (g_hdcMem) {
         if (g_hBitmap) {
@@ -117,30 +120,51 @@ static void ScaleImageBuffer(void) {
     }
 }
 
-// Paint function
+// --- Double Buffered Paint Function ---
 static void OnPaint(HWND hwnd) {
     PAINTSTRUCT ps;
     HDC hdc = BeginPaint(hwnd, &ps);
     
-    // Fill background with black
+    // Get the size of the window client area
     RECT clientRect;
     GetClientRect(hwnd, &clientRect);
-    FillRect(hdc, &clientRect, (HBRUSH)GetStockObject(BLACK_BRUSH));
+    int viewWidth = clientRect.right - clientRect.left;
+    int viewHeight = clientRect.bottom - clientRect.top;
+
+    if (viewWidth <= 0 || viewHeight <= 0) {
+        EndPaint(hwnd, &ps);
+        return;
+    }
+
+    // 1. Create an off-screen DC (Double Buffer) for composition
+    HDC hdcDoubleBuffer = CreateCompatibleDC(hdc);
+    HBITMAP hbmDoubleBuffer = CreateCompatibleBitmap(hdc, viewWidth, viewHeight);
+    HBITMAP hbmOldDoubleBuffer = (HBITMAP)SelectObject(hdcDoubleBuffer, hbmDoubleBuffer);
+
+    // 2. Fill the Double Buffer with Black (Background)
+    FillRect(hdcDoubleBuffer, &clientRect, (HBRUSH)GetStockObject(BLACK_BRUSH));
     
+    // 3. Draw the Emulator Image onto the Double Buffer (if available)
     if (g_hdcMem && g_hBitmap && g_bitmapWidth > 0 && g_bitmapHeight > 0) {
         // Calculate centering offsets
-        int viewWidth = clientRect.right - clientRect.left;
-        int viewHeight = clientRect.bottom - clientRect.top;
         int xOffset = (viewWidth - g_bitmapWidth) / 2;
         int yOffset = (viewHeight - g_bitmapHeight) / 2;
         
-        // Set stretch mode for nearest-neighbor
-        SetStretchBltMode(hdc, COLORONCOLOR);
+        // Set stretch mode
+        SetStretchBltMode(hdcDoubleBuffer, COLORONCOLOR);
         
-        // Draw centered
-        BitBlt(hdc, xOffset, yOffset, g_bitmapWidth, g_bitmapHeight, 
+        // Blit from Emulator Buffer (g_hdcMem) -> Double Buffer (hdcDoubleBuffer)
+        BitBlt(hdcDoubleBuffer, xOffset, yOffset, g_bitmapWidth, g_bitmapHeight, 
                g_hdcMem, 0, 0, SRCCOPY);
     }
+    
+    // 4. Flip: Copy the entire Double Buffer to the Screen (hdc) in one operation
+    BitBlt(hdc, 0, 0, viewWidth, viewHeight, hdcDoubleBuffer, 0, 0, SRCCOPY);
+
+    // 5. Cleanup
+    SelectObject(hdcDoubleBuffer, hbmOldDoubleBuffer);
+    DeleteObject(hbmDoubleBuffer);
+    DeleteDC(hdcDoubleBuffer);
     
     EndPaint(hwnd, &ps);
 }
@@ -170,7 +194,8 @@ static void SetScale(int scale, BOOL resizeWindow) {
             int newHeight = baseHeight * scale * (int)imageBuffer->aspect_ratio;
             
             RECT rect = {0, 0, newWidth, newHeight};
-            AdjustWindowRect(&rect, GetWindowLong(g_hwnd, GWL_STYLE), TRUE);
+            // Use the non-resizable style for calculation
+            AdjustWindowRect(&rect, WINDOW_STYLE_WINDOWED, TRUE);
             
             SetWindowPos(g_hwnd, NULL, 0, 0, 
                         rect.right - rect.left, 
@@ -180,7 +205,7 @@ static void SetScale(int scale, BOOL resizeWindow) {
     }
     
     if (g_hwnd) {
-        InvalidateRect(g_hwnd, NULL, TRUE);
+        InvalidateRect(g_hwnd, NULL, FALSE);
     }
     printf("Scale set to %dx\n", scale);
 }
@@ -191,7 +216,7 @@ static void ToggleFullscreen(void) {
     
     if (isFullscreen) {
         // Exit fullscreen
-        SetWindowLong(g_hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE);
+        SetWindowLong(g_hwnd, GWL_STYLE, WINDOW_STYLE_WINDOWED | WS_VISIBLE);
         SetWindowPlacement(g_hwnd, &savedWindowPlacement);
         SetScale(savedScale, FALSE);
         isFullscreen = FALSE;
@@ -285,6 +310,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
+
+        case WM_ERASEBKGND:
+            return 1;
             
         case WM_PAINT:
             OnPaint(hwnd);
@@ -292,13 +320,26 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN:
+            // --- Allow Alt+F4 to Close ---
+            if (uMsg == WM_SYSKEYDOWN && wParam == VK_F4) {
+                return DefWindowProc(hwnd, uMsg, wParam, lParam);
+            }
+
             if (!(lParam & 0x40000000)) { // Not a repeat
-                // Check for Ctrl+F (fullscreen toggle)
-                if ((GetKeyState(VK_CONTROL) & 0x8000) && wParam == 'F') {
-                    ToggleFullscreen();
-                    return 0;
+                BOOL isCtrl = (GetKeyState(VK_CONTROL) & 0x8000);
+
+                // --- Handle Shortcuts (Ctrl + Key) ---
+                if (isCtrl) {
+                    switch (wParam) {
+                        case 'F': ToggleFullscreen(); return 0;
+                        case '1': SetScale(1, !isFullscreen); return 0;
+                        case '2': SetScale(2, !isFullscreen); return 0;
+                        case '3': SetScale(3, !isFullscreen); return 0;
+                        case '4': SetScale(4, !isFullscreen); return 0;
+                    }
                 }
                 
+                // If not a shortcut, pass to emulator
                 pccore->key = get_scancode(wParam, lParam);
                 pccore->memory[BDA_KBD_STATUS_1] = get_statuscode();
                 printf("Key pressed: 0x%x 0x%x\n", pccore->key, pccore->memory[BDA_KBD_STATUS_1]);
@@ -395,10 +436,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     HMENU hViewMenu = CreatePopupMenu();
     AppendMenu(hViewMenu, MF_STRING, 1005, "Toggle Full Screen\tCtrl+F");
     AppendMenu(hViewMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenu(hViewMenu, MF_STRING, 1001, "1x Scale\t1");
-    AppendMenu(hViewMenu, MF_STRING | MF_CHECKED, 1002, "2x Scale\t2");
-    AppendMenu(hViewMenu, MF_STRING, 1003, "3x Scale\t3");
-    AppendMenu(hViewMenu, MF_STRING, 1004, "4x Scale\t4");
+    // Updated Menu Text to reflect Ctrl+Number
+    AppendMenu(hViewMenu, MF_STRING, 1001, "1x Scale\tCtrl+1");
+    AppendMenu(hViewMenu, MF_STRING | MF_CHECKED, 1002, "2x Scale\tCtrl+2");
+    AppendMenu(hViewMenu, MF_STRING, 1003, "3x Scale\tCtrl+3");
+    AppendMenu(hViewMenu, MF_STRING, 1004, "4x Scale\tCtrl+4");
     AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hViewMenu, "View");
     g_hScaleMenu = hViewMenu;
     
@@ -411,14 +453,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     printf("Window size: %dx%d\n", windowWidth, windowHeight);
     
     RECT rect = {0, 0, windowWidth, windowHeight};
-    AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, TRUE);
+    // Use fixed style
+    AdjustWindowRect(&rect, WINDOW_STYLE_WINDOWED, TRUE);
     
     // Create window
     g_hwnd = CreateWindowEx(
         0,
         "PCCoreEmulator",
         "PC Core Emulator",
-        WS_OVERLAPPEDWINDOW,
+        WINDOW_STYLE_WINDOWED, // Fixed style (No resize)
         CW_USEDEFAULT, CW_USEDEFAULT,
         rect.right - rect.left,
         rect.bottom - rect.top,
@@ -441,7 +484,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     
     // Do initial render
     ScaleImageBuffer();
-    InvalidateRect(g_hwnd, NULL, TRUE);
+    InvalidateRect(g_hwnd, NULL, FALSE);
     
     // Start DOS thread
     dosData = (DOSThreadData *)malloc(sizeof(DOSThreadData));
