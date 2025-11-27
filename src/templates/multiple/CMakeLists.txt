@@ -1,0 +1,25 @@
+set(TEMPLATE_MULTIPLE_SOURCES
+    multiple.c
+    lib.c
+    ${WRAPPER_SOURCES}
+)
+
+# Add the executable target
+# TARGET_NAME and SAMPLE_SOURCES are defined in the parent scopes
+add_executable(${TEMPLATE_MULTIPLE_NAME} ${TEMPLATE_MULTIPLE_SOURCES})
+
+# Link the libraries and frameworks to the executable
+target_link_libraries(${TEMPLATE_MULTIPLE_NAME} PRIVATE
+    ${WRAPPER_LINK_LIBRARIES}
+)
+
+# Set common include directories for the executable
+# COMMON_INCLUDES is defined in the top-level CMakeLists.txt
+target_include_directories(${TEMPLATE_MULTIPLE_NAME} PRIVATE ${COMMON_INCLUDES})
+
+# --- Compilation Flags ---
+
+# Apply general compiler flags (C, CXX, Objective-C/C++ sources)
+target_compile_options(${TEMPLATE_MULTIPLE_NAME} PRIVATE
+    ${WRAPPER_COMPILE_OPTIONS}
+)

@@ -478,10 +478,10 @@ void* dosThreadFunction(void *arg) {
 }
 
 - (void)setuppccore {
-    memset(&pccore, 0, sizeof(PCCORE));
-    pccore.mode = CGA320x200x2;
-    pccore.key = 0;
-    pccore.port[CGA_COLOR_REGISTER_PORT] = 0x20 | 0x10 | 0x01; 
+    pccore = (PCCORE*)malloc(sizeof(PCCORE));
+    pccore->mode = CGA320x200x2;
+    pccore->key = 0;
+    pccore->port[CGA_COLOR_REGISTER_PORT] = 0x20 | 0x10 | 0x01; 
     render(&imageBuffer, pccore);
 }
 
@@ -508,7 +508,7 @@ void* dosThreadFunction(void *arg) {
     [window setLevel:NSNormalWindowLevel];
 
     renderView = [[PixelRenderView alloc] initWithFrame:contentRect 
-                                                 pccore:&pccore 
+                                                 pccore:pccore 
                                             imageBuffer:&imageBuffer 
                                                   scale:currentScale];
     
@@ -524,11 +524,11 @@ void* dosThreadFunction(void *arg) {
 
     struct timeval te; 
     gettimeofday(&te, NULL); 
-    pccore.time = (long long)te.tv_sec * 1000LL + te.tv_usec / 1000;
+    pccore->time = (long long)te.tv_sec * 1000LL + te.tv_usec / 1000;
 
     blinkFrameCounter++;
     if (blinkFrameCounter >= FRAMES_PER_BLINK_HALF_CYCLE) {
-        pccore.blink = 1 - pccore.blink; 
+        pccore->blink = 1 - pccore->blink; 
         blinkFrameCounter = 0;
     }
 

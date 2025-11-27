@@ -1,6 +1,6 @@
 /**
  * @file linux_keyboard.h
- * @brief Converts Linux GDK key codes to IBM PC 16-bit scan codes
+ * @brief Converts X11 KeySyms to IBM PC 16-bit scan codes
  * 
  * IBM PC Scan Code Format (16-bit):
  * - High byte: Scan code (hardware key position)
@@ -12,23 +12,21 @@
 #ifndef LINUX_KEYBOARD_H
 #define LINUX_KEYBOARD_H
 
-#include <gdk/gdk.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include <X11/Xlib.h>
+#include <X11/keysym.h>
 
 /**
- * @brief Converts GDK key event to IBM PC 16-bit scan code
- * @param event The GdkEventKey containing key code and modifier flags
+ * @brief Converts X11 KeySym to IBM PC 16-bit scan code
+ * @param keysym The X11 KeySym value
+ * @param state The modifier state from XKeyEvent
  * @return 16-bit IBM PC scan code (high byte = scan code, low byte = ASCII)
  *         Returns 0x0000 if the key is not mapped
  */
-int get_scancode(GdkEventKey *event);
+int get_scancode(KeySym keysym, unsigned int state);
 
 /**
- * @brief Converts GDK key event modifier flags to IBM PC BIOS Data Area 
- *        Keyboard Status Byte 1 (Memory Address 0x417).
+ * @brief Converts X11 modifier state to the IBM PC BIOS Data Area 
+ * Keyboard Status Byte 1 (Memory Address 0x417).
  *
  * 0x417 Layout:
  * Bit 7: Insert active
@@ -40,13 +38,9 @@ int get_scancode(GdkEventKey *event);
  * Bit 1: Left Shift pressed
  * Bit 0: Right Shift pressed
  *
- * @param event The GdkEventKey to analyze
+ * @param state The X11 modifier state from XKeyEvent
  * @return An integer representing the 0x417 byte
  */
-int get_statuscode(GdkEventKey *event);
-
-#ifdef __cplusplus
-}
-#endif
+int get_statuscode(unsigned int state);
 
 #endif // LINUX_KEYBOARD_H
