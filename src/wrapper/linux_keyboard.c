@@ -1,6 +1,6 @@
 /**
  * @file linux_keyboard.c
- * @brief Converts Linux GDK key codes to IBM PC 16-bit scan codes
+ * @brief Converts X11 KeySyms to IBM PC 16-bit scan codes
  * 
  * IBM PC Scan Code Format (16-bit):
  * - High byte: Scan code (hardware key position)
@@ -9,330 +9,612 @@
  * Reference: https://wiki.nox-rhea.org/back2root/ibm-pc-ms-dos/hardware/informations/keyboard-scan-code
  */
 
+#include <X11/Xlib.h>
+#include <X11/keysym.h>
 #include "linux_keyboard.h"
-#include <gdk/gdkkeysyms.h>
-#include <stdio.h>
 
 /**
- * @brief Converts GDK key event to IBM PC 16-bit scan code
+ * @brief Converts X11 KeySym to IBM PC 16-bit scan code
+ * @param keysym The X11 KeySym value
+ * @param state The modifier state from XKeyEvent
+ * @return 16-bit IBM PC scan code (high byte = scan code, low byte = ASCII)
+ *         Returns 0x0000 if the key is not mapped
  */
-int get_scancode(GdkEventKey *event) {
-    guint keyval = event->keyval;
-    GdkModifierType state = event->state;
-    
+int get_scancode(KeySym keysym, unsigned int state) {
     // Extract modifier states
-    gboolean shift = (state & GDK_SHIFT_MASK) != 0;
-    gboolean ctrl = (state & GDK_CONTROL_MASK) != 0;
-    gboolean alt = (state & GDK_MOD1_MASK) != 0;
+    int shift = (state & ShiftMask) != 0;
+    int ctrl = (state & ControlMask) != 0;
+    int alt = (state & Mod1Mask) != 0;
     
-    // Letter keys (a-z, A-Z)
-    if ((keyval >= GDK_KEY_a && keyval <= GDK_KEY_z) || 
-        (keyval >= GDK_KEY_A && keyval <= GDK_KEY_Z)) {
-        
-        // Normalize to lowercase for indexing
-        int idx;
-        if (keyval >= GDK_KEY_a && keyval <= GDK_KEY_z) {
-            idx = keyval - GDK_KEY_a;
-        } else {
-            idx = keyval - GDK_KEY_A;
-        }
-        
-        const int scanCodes[26] = {
-            0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24,
-            0x25, 0x26, 0x32, 0x31, 0x18, 0x19, 0x10, 0x13, 0x1F, 0x14,
-            0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C
-        };
-        
-        int scanCode = scanCodes[idx];
-        char lowerChar = 'a' + idx;
-        char upperChar = 'A' + idx;
-        
-        if (alt) return (scanCode << 8) | 0x00;
-        if (ctrl) return (scanCode << 8) | (idx + 1);
-        if (shift) return (scanCode << 8) | upperChar;
-        return (scanCode << 8) | lowerChar;
-    }
-    
-    // Number keys (0-9)
-    if (keyval >= GDK_KEY_0 && keyval <= GDK_KEY_9) {
-        const int scanCodes[10] = {0x0B, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A};
-        const char shiftChars[10] = {')', '!', '@', '#', '$', '%', '^', '&', '*', '('};
-        
-        int idx = keyval - GDK_KEY_0;
-        int scanCode = scanCodes[idx];
-        
-        if (alt) return (scanCode << 8) | (0x78 + idx);
-        if (ctrl && keyval == GDK_KEY_2) return 0x0300;
-        if (ctrl && keyval == GDK_KEY_6) return 0x071E;
-        if (shift) return (scanCode << 8) | shiftChars[idx];
-        return (scanCode << 8) | keyval;
-    }
-    
-    // Special character keys
-    switch (keyval) {
-        case GDK_KEY_minus:
-        case GDK_KEY_underscore:
+    // Letter keys (A-Z)
+    switch (keysym) {
+        // Letters
+        case XK_a:
+        case XK_A:
+            if (alt) return 0x1E00;
+            if (ctrl) return 0x1E01;
+            if (shift) return 0x1E41;
+            return 0x1E61;
+            
+        case XK_b:
+        case XK_B:
+            if (alt) return 0x3000;
+            if (ctrl) return 0x3002;
+            if (shift) return 0x3042;
+            return 0x3062;
+            
+        case XK_c:
+        case XK_C:
+            if (alt) return 0x2E00;
+            if (ctrl) return 0x2E03;
+            if (shift) return 0x2E43;
+            return 0x2E63;
+            
+        case XK_d:
+        case XK_D:
+            if (alt) return 0x2000;
+            if (ctrl) return 0x2004;
+            if (shift) return 0x2044;
+            return 0x2064;
+            
+        case XK_e:
+        case XK_E:
+            if (alt) return 0x1200;
+            if (ctrl) return 0x1205;
+            if (shift) return 0x1245;
+            return 0x1265;
+            
+        case XK_f:
+        case XK_F:
+            if (alt) return 0x2100;
+            if (ctrl) return 0x2106;
+            if (shift) return 0x2146;
+            return 0x2166;
+            
+        case XK_g:
+        case XK_G:
+            if (alt) return 0x2200;
+            if (ctrl) return 0x2207;
+            if (shift) return 0x2247;
+            return 0x2267;
+            
+        case XK_h:
+        case XK_H:
+            if (alt) return 0x2300;
+            if (ctrl) return 0x2308;
+            if (shift) return 0x2348;
+            return 0x2368;
+            
+        case XK_i:
+        case XK_I:
+            if (alt) return 0x1700;
+            if (ctrl) return 0x1709;
+            if (shift) return 0x1749;
+            return 0x1769;
+            
+        case XK_j:
+        case XK_J:
+            if (alt) return 0x2400;
+            if (ctrl) return 0x240A;
+            if (shift) return 0x244A;
+            return 0x246A;
+            
+        case XK_k:
+        case XK_K:
+            if (alt) return 0x2500;
+            if (ctrl) return 0x250B;
+            if (shift) return 0x254B;
+            return 0x256B;
+            
+        case XK_l:
+        case XK_L:
+            if (alt) return 0x2600;
+            if (ctrl) return 0x260C;
+            if (shift) return 0x264C;
+            return 0x266C;
+            
+        case XK_m:
+        case XK_M:
+            if (alt) return 0x3200;
+            if (ctrl) return 0x320D;
+            if (shift) return 0x324D;
+            return 0x326D;
+            
+        case XK_n:
+        case XK_N:
+            if (alt) return 0x3100;
+            if (ctrl) return 0x310E;
+            if (shift) return 0x314E;
+            return 0x316E;
+            
+        case XK_o:
+        case XK_O:
+            if (alt) return 0x1800;
+            if (ctrl) return 0x180F;
+            if (shift) return 0x184F;
+            return 0x186F;
+            
+        case XK_p:
+        case XK_P:
+            if (alt) return 0x1900;
+            if (ctrl) return 0x1910;
+            if (shift) return 0x1950;
+            return 0x1970;
+            
+        case XK_q:
+        case XK_Q:
+            if (alt) return 0x1000;
+            if (ctrl) return 0x1011;
+            if (shift) return 0x1051;
+            return 0x1071;
+            
+        case XK_r:
+        case XK_R:
+            if (alt) return 0x1300;
+            if (ctrl) return 0x1312;
+            if (shift) return 0x1352;
+            return 0x1372;
+            
+        case XK_s:
+        case XK_S:
+            if (alt) return 0x1F00;
+            if (ctrl) return 0x1F13;
+            if (shift) return 0x1F53;
+            return 0x1F73;
+            
+        case XK_t:
+        case XK_T:
+            if (alt) return 0x1400;
+            if (ctrl) return 0x1414;
+            if (shift) return 0x1454;
+            return 0x1474;
+            
+        case XK_u:
+        case XK_U:
+            if (alt) return 0x1600;
+            if (ctrl) return 0x1615;
+            if (shift) return 0x1655;
+            return 0x1675;
+            
+        case XK_v:
+        case XK_V:
+            if (alt) return 0x2F00;
+            if (ctrl) return 0x2F16;
+            if (shift) return 0x2F56;
+            return 0x2F76;
+            
+        case XK_w:
+        case XK_W:
+            if (alt) return 0x1100;
+            if (ctrl) return 0x1117;
+            if (shift) return 0x1157;
+            return 0x1177;
+            
+        case XK_x:
+        case XK_X:
+            if (alt) return 0x2D00;
+            if (ctrl) return 0x2D18;
+            if (shift) return 0x2D58;
+            return 0x2D78;
+            
+        case XK_y:
+        case XK_Y:
+            if (alt) return 0x1500;
+            if (ctrl) return 0x1519;
+            if (shift) return 0x1559;
+            return 0x1579;
+            
+        case XK_z:
+        case XK_Z:
+            if (alt) return 0x2C00;
+            if (ctrl) return 0x2C1A;
+            if (shift) return 0x2C5A;
+            return 0x2C7A;
+            
+        // Number keys (1-0)
+        case XK_1:
+        case XK_exclam:
+            if (alt) return 0x7800;
+            if (shift) return 0x0221;
+            return 0x0231;
+            
+        case XK_2:
+        case XK_at:
+            if (alt) return 0x7900;
+            if (ctrl) return 0x0300;
+            if (shift) return 0x0340; // @
+            return 0x0332;
+            
+        case XK_3:
+        case XK_numbersign:
+            if (alt) return 0x7A00;
+            if (shift) return 0x0423; // #
+            return 0x0433;
+            
+        case XK_4:
+        case XK_dollar:
+            if (alt) return 0x7B00;
+            if (shift) return 0x0524; // $
+            return 0x0534;
+            
+        case XK_5:
+        case XK_percent:
+            if (alt) return 0x7C00;
+            if (shift) return 0x0625; // %
+            return 0x0635;
+            
+        case XK_6:
+        case XK_asciicircum:
+            if (alt) return 0x7D00;
+            if (ctrl) return 0x071E;
+            if (shift) return 0x075E; // ^
+            return 0x0736;
+            
+        case XK_7:
+        case XK_ampersand:
+            if (alt) return 0x7E00;
+            if (shift) return 0x0826; // &
+            return 0x0837;
+            
+        case XK_8:
+        case XK_asterisk:
+            if (alt) return 0x7F00;
+            if (shift) return 0x092A; // *
+            return 0x0938;
+            
+        case XK_9:
+        case XK_parenleft:
+            if (alt) return 0x8000;
+            if (shift) return 0x0A28; // (
+            return 0x0A39;
+            
+        case XK_0:
+        case XK_parenright:
+            if (alt) return 0x8100;
+            if (shift) return 0x0B29; // )
+            return 0x0B30;
+            
+        // Symbol keys
+        case XK_minus:
+        case XK_underscore:
             if (alt) return 0x8200;
             if (ctrl) return 0x0C1F;
-            if (shift) return 0x0C5F;
+            if (shift) return 0x0C5F; // _
             return 0x0C2D;
             
-        case GDK_KEY_equal:
-        case GDK_KEY_plus:
+        case XK_equal:
+        case XK_plus:
             if (alt) return 0x8300;
-            if (shift) return 0x0D2B;
+            if (shift) return 0x0D2B; // +
             return 0x0D3D;
             
-        case GDK_KEY_bracketleft:
-        case GDK_KEY_braceleft:
+        case XK_bracketleft:
+        case XK_braceleft:
             if (alt) return 0x1A00;
             if (ctrl) return 0x1A1B;
-            if (shift) return 0x1A7B;
+            if (shift) return 0x1A7B; // {
             return 0x1A5B;
             
-        case GDK_KEY_bracketright:
-        case GDK_KEY_braceright:
+        case XK_bracketright:
+        case XK_braceright:
             if (alt) return 0x1B00;
             if (ctrl) return 0x1B1D;
-            if (shift) return 0x1B7D;
+            if (shift) return 0x1B7D; // }
             return 0x1B5D;
             
-        case GDK_KEY_semicolon:
-        case GDK_KEY_colon:
+        case XK_semicolon:
+        case XK_colon:
             if (alt) return 0x2700;
-            if (shift) return 0x273A;
+            if (shift) return 0x273A; // :
             return 0x273B;
             
-        case GDK_KEY_apostrophe:
-        case GDK_KEY_quotedbl:
-            if (shift) return 0x2822;
+        case XK_apostrophe:
+        case XK_quotedbl:
+            if (shift) return 0x2822; // "
             return 0x2827;
             
-        case GDK_KEY_grave:
-        case GDK_KEY_asciitilde:
-            if (shift) return 0x297E;
+        case XK_grave:
+        case XK_asciitilde:
+            if (shift) return 0x297E; // ~
             return 0x2960;
             
-        case GDK_KEY_backslash:
-        case GDK_KEY_bar:
+        case XK_backslash:
+        case XK_bar:
             if (alt) return 0x2600;
             if (ctrl) return 0x2B1C;
-            if (shift) return 0x2B7C;
+            if (shift) return 0x2B7C; // |
             return 0x2B5C;
             
-        case GDK_KEY_comma:
-        case GDK_KEY_less:
-            if (shift) return 0x333C;
+        case XK_comma:
+        case XK_less:
+            if (shift) return 0x333C; // <
             return 0x332C;
             
-        case GDK_KEY_period:
-        case GDK_KEY_greater:
-            if (shift) return 0x343E;
+        case XK_period:
+        case XK_greater:
+            if (shift) return 0x343E; // >
             return 0x342E;
             
-        case GDK_KEY_slash:
-        case GDK_KEY_question:
-            if (shift) return 0x353F;
+        case XK_slash:
+        case XK_question:
+            if (shift) return 0x353F; // ?
             return 0x352F;
-    }
-    
-    // Function keys
-    if (keyval >= GDK_KEY_F1 && keyval <= GDK_KEY_F12) {
-        const int baseScanCodes[12] = {
-            0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x41, 0x42, 0x43, 0x44, 0x85, 0x86
-        };
-        
-        int idx = keyval - GDK_KEY_F1;
-        int scanCode = baseScanCodes[idx];
-        
-        if (alt) {
-            const int altCodes[12] = {0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F, 0x70, 0x71, 0x8B, 0x8C};
-            return (altCodes[idx] << 8);
-        }
-        if (ctrl) {
-            const int ctrlCodes[12] = {0x5E, 0x5F, 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x89, 0x8A};
-            return (ctrlCodes[idx] << 8);
-        }
-        if (shift) {
-            const int shiftCodes[12] = {0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x87, 0x88};
-            return (shiftCodes[idx] << 8);
-        }
-        return (scanCode << 8);
-    }
-    
-    // Special keys
-    switch (keyval) {
-        case GDK_KEY_BackSpace:
+            
+        // Function keys
+        case XK_F1:
+            if (alt) return 0x6800;
+            if (ctrl) return 0x5E00;
+            if (shift) return 0x5400;
+            return 0x3B00;
+            
+        case XK_F2:
+            if (alt) return 0x6900;
+            if (ctrl) return 0x5F00;
+            if (shift) return 0x5500;
+            return 0x3C00;
+            
+        case XK_F3:
+            if (alt) return 0x6A00;
+            if (ctrl) return 0x6000;
+            if (shift) return 0x5600;
+            return 0x3D00;
+            
+        case XK_F4:
+            if (alt) return 0x6B00;
+            if (ctrl) return 0x6100;
+            if (shift) return 0x5700;
+            return 0x3E00;
+            
+        case XK_F5:
+            if (alt) return 0x6C00;
+            if (ctrl) return 0x6200;
+            if (shift) return 0x5800;
+            return 0x3F00;
+            
+        case XK_F6:
+            if (alt) return 0x6D00;
+            if (ctrl) return 0x6300;
+            if (shift) return 0x5900;
+            return 0x4000;
+            
+        case XK_F7:
+            if (alt) return 0x6E00;
+            if (ctrl) return 0x6400;
+            if (shift) return 0x5A00;
+            return 0x4100;
+            
+        case XK_F8:
+            if (alt) return 0x6F00;
+            if (ctrl) return 0x6500;
+            if (shift) return 0x5B00;
+            return 0x4200;
+            
+        case XK_F9:
+            if (alt) return 0x7000;
+            if (ctrl) return 0x6600;
+            if (shift) return 0x5C00;
+            return 0x4300;
+            
+        case XK_F10:
+            if (alt) return 0x7100;
+            if (ctrl) return 0x6700;
+            if (shift) return 0x5D00;
+            return 0x4400;
+            
+        case XK_F11:
+            if (alt) return 0x8B00;
+            if (ctrl) return 0x8900;
+            if (shift) return 0x8700;
+            return 0x8500;
+            
+        case XK_F12:
+            if (alt) return 0x8C00;
+            if (ctrl) return 0x8A00;
+            if (shift) return 0x8800;
+            return 0x8600;
+            
+        // Special keys
+        case XK_BackSpace:
             if (alt) return 0x0E00;
             if (ctrl) return 0x0E7F;
             return 0x0E08;
             
-        case GDK_KEY_Delete:
+        case XK_Delete:
             if (alt) return 0xA300;
             if (ctrl) return 0x9300;
             if (shift) return 0x532E;
             return 0x5300;
             
-        case GDK_KEY_Down:
+        case XK_Down:
             if (alt) return 0xA000;
             if (ctrl) return 0x9100;
             if (shift) return 0x5032;
             return 0x5000;
             
-        case GDK_KEY_End:
+        case XK_End:
             if (alt) return 0x9F00;
             if (ctrl) return 0x7500;
             if (shift) return 0x4F31;
             return 0x4F00;
             
-        case GDK_KEY_Return:
-        case GDK_KEY_KP_Enter:
+        case XK_Return:
             if (alt) return 0xA600;
             if (ctrl) return 0x1C0A;
             return 0x1C0D;
             
-        case GDK_KEY_Escape:
+        case XK_Escape:
             if (alt) return 0x0100;
             return 0x011B;
             
-        case GDK_KEY_Home:
+        case XK_Home:
             if (alt) return 0x9700;
             if (ctrl) return 0x7700;
             if (shift) return 0x4737;
             return 0x4700;
             
-        case GDK_KEY_Insert:
+        case XK_Insert:
             if (alt) return 0xA200;
             if (ctrl) return 0x9200;
             if (shift) return 0x5230;
             return 0x5200;
             
-        case GDK_KEY_Left:
+        case XK_Left:
             if (alt) return 0x9B00;
             if (ctrl) return 0x7300;
             if (shift) return 0x4B34;
             return 0x4B00;
             
-        case GDK_KEY_Page_Down:
+        case XK_Page_Down:
             if (alt) return 0xA100;
             if (ctrl) return 0x7600;
             if (shift) return 0x5133;
             return 0x5100;
             
-        case GDK_KEY_Page_Up:
+        case XK_Page_Up:
             if (alt) return 0x9900;
             if (ctrl) return 0x8400;
             if (shift) return 0x4939;
             return 0x4900;
             
-        case GDK_KEY_Right:
+        case XK_Right:
             if (alt) return 0x9D00;
             if (ctrl) return 0x7400;
             if (shift) return 0x4D36;
             return 0x4D00;
             
-        case GDK_KEY_space:
+        case XK_space:
             return 0x3920;
             
-        case GDK_KEY_Tab:
-        case GDK_KEY_ISO_Left_Tab:
+        case XK_Tab:
             if (alt) return 0xA500;
             if (ctrl) return 0x9400;
             if (shift) return 0x0F00;
             return 0x0F09;
             
-        case GDK_KEY_Up:
+        case XK_Up:
             if (alt) return 0x9800;
             if (ctrl) return 0x8D00;
             if (shift) return 0x4838;
             return 0x4800;
-    }
-    
-    // Numeric keypad
-    if (keyval >= GDK_KEY_KP_0 && keyval <= GDK_KEY_KP_9) {
-        const int scanCodes[10] = {0x52, 0x4F, 0x50, 0x51, 0x4B, 0x4C, 0x4D, 0x47, 0x48, 0x49};
-        const char chars[10] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
-        const int shiftedCodes[10] = {0x5230, 0x4F31, 0x5032, 0x5133, 0x4B34, 0x4C35, 0x4D36, 0x4737, 0x4838, 0x4939};
-        
-        int idx = keyval - GDK_KEY_KP_0;
-        
-        if (shift) return shiftedCodes[idx];
-        if (idx == 5 && ctrl) return 0x8F00;
-        return (scanCodes[idx] << 8) | chars[idx];
-    }
-    
-    switch (keyval) {
-        case GDK_KEY_KP_Multiply:
+            
+        // Keypad keys
+        case XK_KP_0:
+            if (shift) return 0x5230;
+            return 0x5200;
+            
+        case XK_KP_1:
+            if (shift) return 0x4F31;
+            return 0x4F00;
+            
+        case XK_KP_2:
+            if (shift) return 0x5032;
+            return 0x5000;
+            
+        case XK_KP_3:
+            if (shift) return 0x5133;
+            return 0x5100;
+            
+        case XK_KP_4:
+            if (shift) return 0x4B34;
+            return 0x4B00;
+            
+        case XK_KP_5:
+            if (shift) return 0x4C35;
+            if (ctrl) return 0x8F00;
+            return 0x0000;
+            
+        case XK_KP_6:
+            if (shift) return 0x4D36;
+            return 0x4D00;
+            
+        case XK_KP_7:
+            if (shift) return 0x4737;
+            return 0x4700;
+            
+        case XK_KP_8:
+            if (shift) return 0x4838;
+            return 0x4800;
+            
+        case XK_KP_9:
+            if (shift) return 0x4939;
+            return 0x4900;
+            
+        case XK_KP_Multiply:
             if (alt) return 0x3700;
             if (ctrl) return 0x9600;
             return 0x372A;
             
-        case GDK_KEY_KP_Add:
+        case XK_KP_Add:
             if (alt) return 0x4E00;
             return 0x4E2B;
             
-        case GDK_KEY_KP_Decimal:
-        case GDK_KEY_KP_Delete:
+        case XK_KP_Decimal:
             if (shift) return 0x532E;
             return 0x5300;
             
-        case GDK_KEY_KP_Divide:
+        case XK_KP_Divide:
             if (alt) return 0xA400;
             if (ctrl) return 0x9500;
             return 0x352F;
             
-        case GDK_KEY_KP_Subtract:
+        case XK_KP_Enter:
+            if (alt) return 0xA600;
+            if (ctrl) return 0x1C0A;
+            return 0x1C0D;
+            
+        case XK_KP_Equal:
+            return 0x0D3D;
+            
+        case XK_KP_Subtract:
             if (alt) return 0x4A00;
             if (ctrl) return 0x8E00;
             return 0x4A2D;
+            
+        default:
+            return 0x0000; // Unmapped key
     }
-    
-    return 0x0000; // Unmapped key
 }
 
 /**
- * @brief Converts GDK key event to IBM PC BIOS status byte
+ * @brief Converts X11 modifier state to IBM PC BIOS keyboard status byte
+ * @param state The modifier state from XKeyEvent
+ * @return BIOS keyboard status byte (0x417)
  */
-int get_statuscode(GdkEventKey *event) {
-    GdkModifierType state = event->state;
+int get_statuscode(unsigned int state) {
     int bios_byte = 0x00;
     
-    // Check shift keys
-    // GDK doesn't easily distinguish left/right shift in modifier flags
-    // We'll treat any shift as left shift for simplicity
-    if (state & GDK_SHIFT_MASK) {
-        bios_byte |= 0x02; // Bit 1: Left Shift
-        // Note: Right shift detection would require hardware scan codes
+    // Bit 0-1: Shift keys (X11 doesn't distinguish left/right easily)
+    if (state & ShiftMask) {
+        bios_byte |= 0x02; // Set left shift bit
     }
     
-    // Control (Bit 2)
-    if (state & GDK_CONTROL_MASK) {
+    // Bit 2: Control key
+    if (state & ControlMask) {
         bios_byte |= 0x04;
     }
     
-    // Alt (Bit 3)
-    if (state & GDK_MOD1_MASK) {
+    // Bit 3: Alt key
+    if (state & Mod1Mask) {
         bios_byte |= 0x08;
     }
     
-    // Scroll Lock (Bit 4)
-    if (state & GDK_SCROLL_LOCK_MASK) {
+    // Bit 4: Scroll Lock (Mod5 on some systems)
+    if (state & Mod5Mask) {
         bios_byte |= 0x10;
     }
     
-    // Num Lock (Bit 5)
-    if (state & GDK_MOD2_MASK) {
+    // Bit 5: Num Lock (Mod2 on most systems)
+    if (state & Mod2Mask) {
         bios_byte |= 0x20;
     }
     
-    // Caps Lock (Bit 6)
-    if (state & GDK_LOCK_MASK) {
+    // Bit 6: Caps Lock
+    if (state & LockMask) {
         bios_byte |= 0x40;
     }
     
-    // Insert (Bit 7)
-    // GDK doesn't have a standard insert toggle state modifier
-    // Would need to track this separately
+    // Bit 7: Insert mode (not typically available in X11 state)
+    // bios_byte |= 0x80;
     
     return bios_byte;
 }

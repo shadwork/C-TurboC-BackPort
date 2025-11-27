@@ -46,13 +46,21 @@ if(APPLE)
     set(CMAKE_OBJC_COMPILER "clang")    
     message(STATUS "Configuring for macOS (APPLE).")
 elseif(UNIX)
+    add_compile_definitions(LINUX)
     # Linux/BSD specific sources (C files). Note: APPLE is checked first.
     set(WRAPPER_SOURCES
         ${CMAKE_SOURCE_DIR}/wrapper/linux_keyboard.c
         ${CMAKE_SOURCE_DIR}/wrapper/linux.c
     )
+    set(WRAPPER_LINK_LIBRARIES
+        ${PCCORE_NAME}
+        -lX11
+        -lm
+        -lpthread
+    )        
     message(STATUS "Configuring for Linux/UNIX.")
 elseif(WIN32)
+    add_compile_definitions(WINDOWS)
     # Windows specific sources (C files)
     set(WRAPPER_SOURCES
         ${CMAKE_SOURCE_DIR}/wrapper/windows_keyboard.c

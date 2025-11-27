@@ -3,7 +3,7 @@
 
 #include "../pccore/pccore.h"
 
-#ifdef MACOS
+#ifndef WINDOWS
 typedef long time_t;
 #endif
 
