@@ -24,6 +24,12 @@ static IMAGE imageBuffer;
 static int currentScale = 2;
 static int isFullscreen = 0;
 
+// Double buffering
+static Pixmap backBuffer = 0;
+static GC backBufferGC;
+static int bufferWidth = 0;
+static int bufferHeight = 0;
+
 // Window state for fullscreen toggle
 static int savedX, savedY, savedWidth, savedHeight;
 static int savedScale;
@@ -50,6 +56,8 @@ void setScale(int scale, int resizeWindow);
 void toggleFullscreen();
 void handleKeyPress(XKeyEvent *event);
 void handleKeyRelease(XKeyEvent *event);
+void createBackBuffer(int width, int height);
+void destroyBackBuffer();
 
 void* dosThreadFunction(void *arg) {
     DOSThreadData *data = (DOSThreadData *)arg;
@@ -66,6 +74,36 @@ void setupPCCore() {
     pccore->key = 0;
     pccore->port[CGA_COLOR_REGISTER_PORT] = 0x20 | 0x10 | 0x01;
     render(&imageBuffer, pccore);
+}
+
+void createBackBuffer(int width, int height) {
+    if (backBuffer && (width != bufferWidth || height != bufferHeight)) {
+        destroyBackBuffer();
+    }
+    
+    if (!backBuffer) {
+        int screen = DefaultScreen(display);
+        int depth = DefaultDepth(display, screen);
+        
+        backBuffer = XCreatePixmap(display, window, width, height, depth);
+        backBufferGC = XCreateGC(display, backBuffer, 0, NULL);
+        bufferWidth = width;
+        bufferHeight = height;
+        
+        // Clear to black
+        XSetForeground(display, backBufferGC, BlackPixel(display, screen));
+        XFillRectangle(display, backBuffer, backBufferGC, 0, 0, width, height);
+    }
+}
+
+void destroyBackBuffer() {
+    if (backBuffer) {
+        XFreePixmap(display, backBuffer);
+        XFreeGC(display, backBufferGC);
+        backBuffer = 0;
+        bufferWidth = 0;
+        bufferHeight = 0;
+    }
 }
 
 void createWindow() {
@@ -87,10 +125,11 @@ void createWindow() {
     attrs.event_mask = ExposureMask | KeyPressMask | KeyReleaseMask | 
                        StructureNotifyMask | FocusChangeMask;
     attrs.background_pixel = BlackPixel(display, screen);
+    attrs.backing_store = Always; // Request backing store for smoother updates
 
     window = XCreateWindow(display, root, 0, 0, winWidth, winHeight, 0,
                           CopyFromParent, InputOutput, CopyFromParent,
-                          CWEventMask | CWBackPixel, &attrs);
+                          CWEventMask | CWBackPixel | CWBackingStore, &attrs);
 
     XStoreName(display, window, "PC Core Emulator");
     
@@ -112,6 +151,9 @@ void createWindow() {
     
     XMapWindow(display, window);
     XFlush(display);
+    
+    // Create initial back buffer
+    createBackBuffer(winWidth, winHeight);
 }
 
 void scaleAndRender(unsigned char *scaledBuffer, int dstWidth, int dstHeight) {
@@ -142,6 +184,13 @@ void renderFrame() {
         return;
     }
 
+    // Get window size
+    XWindowAttributes xwa;
+    XGetWindowAttributes(display, window, &xwa);
+    
+    // Create or resize back buffer if needed
+    createBackBuffer(xwa.width, xwa.height);
+
     int srcWidth = imageBuffer.width;
     int srcHeight = imageBuffer.height;
     int dstWidth = srcWidth * currentScale;
@@ -168,22 +217,21 @@ void renderFrame() {
                              (char *)scaledBuffer, dstWidth, dstHeight, 32, dstWidth * 4);
     }
 
-    if (ximage) {
-        // Get window size
-        XWindowAttributes xwa;
-        XGetWindowAttributes(display, window, &xwa);
-        
+    if (ximage && backBuffer) {
         // Calculate centering offsets
         int xOffset = (xwa.width - dstWidth) / 2;
         int yOffset = (xwa.height - dstHeight) / 2;
         
-        // Clear to black
-        XSetForeground(display, gc, BlackPixel(display, DefaultScreen(display)));
-        XFillRectangle(display, window, gc, 0, 0, xwa.width, xwa.height);
+        // Draw to back buffer (offscreen)
+        XSetForeground(display, backBufferGC, BlackPixel(display, screen));
+        XFillRectangle(display, backBuffer, backBufferGC, 0, 0, xwa.width, xwa.height);
+        XPutImage(display, backBuffer, backBufferGC, ximage, 0, 0, xOffset, yOffset, dstWidth, dstHeight);
         
-        // Draw centered image
-        XPutImage(display, window, gc, ximage, 0, 0, xOffset, yOffset, dstWidth, dstHeight);
-        XFlush(display);
+        // Copy back buffer to window (single operation - no tearing)
+        XCopyArea(display, backBuffer, window, gc, 0, 0, xwa.width, xwa.height, 0, 0);
+        
+        // Sync to ensure the frame is displayed
+        XSync(display, False);
     }
 
     // Note: We don't free scaledBuffer here as it's managed by ximage
@@ -327,6 +375,8 @@ void cleanup() {
         free(dosData);
         dosData = NULL;
     }
+    
+    destroyBackBuffer();
     
     if (ximage) {
         if (ximage->data) {
