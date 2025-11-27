@@ -34,6 +34,24 @@ static int bufferHeight = 0;
 static int savedX, savedY, savedWidth, savedHeight;
 static int savedScale;
 
+// Menu state
+static Window menuWindow = 0;
+static int menuVisible = 0;
+static int menuX = 0, menuY = 0;
+static int menuWidth = 200;
+static int menuItemHeight = 25;
+static int menuSelectedItem = -1;
+
+// Menu items
+typedef struct {
+    char *label;
+    void (*action)();
+} MenuItem;
+
+#define MAX_MENU_ITEMS 10
+static MenuItem menuItems[MAX_MENU_ITEMS];
+static int menuItemCount = 0;
+
 // Blinking state
 static const int FRAMES_PER_BLINK_HALF_CYCLE = 8;
 static int blinkFrameCounter = 0;
@@ -58,6 +76,17 @@ void handleKeyPress(XKeyEvent *event);
 void handleKeyRelease(XKeyEvent *event);
 void createBackBuffer(int width, int height);
 void destroyBackBuffer();
+void showMenu(int x, int y);
+void hideMenu();
+void renderMenu();
+void handleMenuClick(int x, int y);
+void addMenuItem(const char *label, void (*action)());
+void menuActionScale1();
+void menuActionScale2();
+void menuActionScale3();
+void menuActionScale4();
+void menuActionFullscreen();
+void menuActionExit();
 
 void* dosThreadFunction(void *arg) {
     DOSThreadData *data = (DOSThreadData *)arg;
@@ -74,6 +103,132 @@ void setupPCCore() {
     pccore->key = 0;
     pccore->port[CGA_COLOR_REGISTER_PORT] = 0x20 | 0x10 | 0x01;
     render(&imageBuffer, pccore);
+}
+
+// Menu action callbacks
+void menuActionScale1() { setScale(1, !isFullscreen); hideMenu(); }
+void menuActionScale2() { setScale(2, !isFullscreen); hideMenu(); }
+void menuActionScale3() { setScale(3, !isFullscreen); hideMenu(); }
+void menuActionScale4() { setScale(4, !isFullscreen); hideMenu(); }
+void menuActionFullscreen() { toggleFullscreen(); hideMenu(); }
+void menuActionExit() { running = 0; hideMenu(); }
+
+void addMenuItem(const char *label, void (*action)()) {
+    if (menuItemCount < MAX_MENU_ITEMS) {
+        menuItems[menuItemCount].label = strdup(label);
+        menuItems[menuItemCount].action = action;
+        menuItemCount++;
+    }
+}
+
+void setupMenu() {
+    addMenuItem("Scale 1x", menuActionScale1);
+    addMenuItem("Scale 2x", menuActionScale2);
+    addMenuItem("Scale 3x", menuActionScale3);
+    addMenuItem("Scale 4x", menuActionScale4);
+    addMenuItem("Fullscreen (Ctrl+F)", menuActionFullscreen);
+    addMenuItem("Exit", menuActionExit);
+}
+
+void createMenuWindow() {
+    int screen = DefaultScreen(display);
+    Window root = RootWindow(display, screen);
+    
+    XSetWindowAttributes attrs;
+    attrs.override_redirect = True; // Popup style
+    attrs.background_pixel = WhitePixel(display, screen);
+    attrs.border_pixel = BlackPixel(display, screen);
+    attrs.event_mask = ButtonPressMask | ButtonReleaseMask | 
+                       PointerMotionMask | ExposureMask | LeaveWindowMask;
+    
+    int menuHeight = menuItemCount * menuItemHeight;
+    menuWindow = XCreateWindow(display, root, 0, 0, menuWidth, menuHeight, 1,
+                              CopyFromParent, InputOutput, CopyFromParent,
+                              CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWEventMask,
+                              &attrs);
+}
+
+void showMenu(int x, int y) {
+    if (!menuWindow) {
+        createMenuWindow();
+    }
+    
+    menuX = x;
+    menuY = y;
+    menuVisible = 1;
+    menuSelectedItem = -1;
+    
+    int menuHeight = menuItemCount * menuItemHeight;
+    XMoveResizeWindow(display, menuWindow, x, y, menuWidth, menuHeight);
+    XMapRaised(display, menuWindow);
+    XFlush(display);
+}
+
+void hideMenu() {
+    if (menuVisible && menuWindow) {
+        XUnmapWindow(display, menuWindow);
+        menuVisible = 0;
+        menuSelectedItem = -1;
+        XFlush(display);
+    }
+}
+
+void renderMenu() {
+    if (!menuVisible || !menuWindow) return;
+    
+    int screen = DefaultScreen(display);
+    GC menuGC = XCreateGC(display, menuWindow, 0, NULL);
+    
+    XFontStruct *font = XLoadQueryFont(display, "fixed");
+    if (font) {
+        XSetFont(display, menuGC, font->fid);
+    }
+    
+    for (int i = 0; i < menuItemCount; i++) {
+        int y = i * menuItemHeight;
+        
+        // Background
+        if (i == menuSelectedItem) {
+            XSetForeground(display, menuGC, 0x4A90E2); // Blue highlight
+        } else {
+            XSetForeground(display, menuGC, WhitePixel(display, screen));
+        }
+        XFillRectangle(display, menuWindow, menuGC, 0, y, menuWidth, menuItemHeight);
+        
+        // Text
+        if (i == menuSelectedItem) {
+            XSetForeground(display, menuGC, WhitePixel(display, screen));
+        } else {
+            XSetForeground(display, menuGC, BlackPixel(display, screen));
+        }
+        
+        int textX = 10;
+        int textY = y + menuItemHeight / 2 + 5;
+        XDrawString(display, menuWindow, menuGC, textX, textY, 
+                   menuItems[i].label, strlen(menuItems[i].label));
+        
+        // Separator line
+        XSetForeground(display, menuGC, 0xCCCCCC);
+        XDrawLine(display, menuWindow, menuGC, 0, y + menuItemHeight - 1, 
+                 menuWidth, y + menuItemHeight - 1);
+    }
+    
+    if (font) {
+        XFreeFont(display, font);
+    }
+    XFreeGC(display, menuGC);
+    XFlush(display);
+}
+
+void handleMenuClick(int x, int y) {
+    if (!menuVisible) return;
+    
+    int itemIndex = y / menuItemHeight;
+    if (itemIndex >= 0 && itemIndex < menuItemCount) {
+        if (menuItems[itemIndex].action) {
+            menuItems[itemIndex].action();
+        }
+    }
 }
 
 void createBackBuffer(int width, int height) {
@@ -123,7 +278,7 @@ void createWindow() {
 
     XSetWindowAttributes attrs;
     attrs.event_mask = ExposureMask | KeyPressMask | KeyReleaseMask | 
-                       StructureNotifyMask | FocusChangeMask;
+                       StructureNotifyMask | FocusChangeMask | ButtonPressMask;
     attrs.background_pixel = BlackPixel(display, screen);
     attrs.backing_store = Always; // Request backing store for smoother updates
 
@@ -154,6 +309,9 @@ void createWindow() {
     
     // Create initial back buffer
     createBackBuffer(winWidth, winHeight);
+    
+    // Setup menu
+    setupMenu();
 }
 
 void scaleAndRender(unsigned char *scaledBuffer, int dstWidth, int dstHeight) {
@@ -376,6 +534,14 @@ void cleanup() {
         dosData = NULL;
     }
     
+    // Clean up menu
+    for (int i = 0; i < menuItemCount; i++) {
+        free(menuItems[i].label);
+    }
+    if (menuWindow) {
+        XDestroyWindow(display, menuWindow);
+    }
+    
     destroyBackBuffer();
     
     if (ximage) {
@@ -436,29 +602,78 @@ int main(int argc, char *argv[]) {
             XEvent event;
             XNextEvent(display, &event);
             
-            switch (event.type) {
-                case Expose:
-                    renderFrame();
-                    break;
-                    
-                case KeyPress:
-                    handleKeyPress(&event.xkey);
-                    break;
-                    
-                case KeyRelease:
-                    handleKeyRelease(&event.xkey);
-                    break;
-                    
-                case ClientMessage:
-                    if (event.xclient.data.l[0] == wmDeleteWindow) {
-                        running = 0;
-                    }
-                    break;
-                    
-                case ConfigureNotify:
-                    // Window resized
-                    renderFrame();
-                    break;
+            // Check if event is for menu window
+            if (event.xany.window == menuWindow) {
+                switch (event.type) {
+                    case Expose:
+                        renderMenu();
+                        break;
+                        
+                    case ButtonPress:
+                        if (event.xbutton.button == Button1) {
+                            handleMenuClick(event.xbutton.x, event.xbutton.y);
+                        }
+                        break;
+                        
+                    case MotionNotify:
+                        {
+                            int oldSelected = menuSelectedItem;
+                            menuSelectedItem = event.xmotion.y / menuItemHeight;
+                            if (menuSelectedItem >= menuItemCount) {
+                                menuSelectedItem = -1;
+                            }
+                            if (oldSelected != menuSelectedItem) {
+                                renderMenu();
+                            }
+                        }
+                        break;
+                        
+                    case LeaveNotify:
+                        hideMenu();
+                        break;
+                }
+            } else {
+                // Events for main window
+                switch (event.type) {
+                    case Expose:
+                        renderFrame();
+                        break;
+                        
+                    case ButtonPress:
+                        if (event.xbutton.button == Button3) { // Right click
+                            // Convert window coordinates to root coordinates
+                            Window child;
+                            int rootX, rootY;
+                            XTranslateCoordinates(display, window, 
+                                                RootWindow(display, DefaultScreen(display)),
+                                                event.xbutton.x, event.xbutton.y,
+                                                &rootX, &rootY, &child);
+                            showMenu(rootX, rootY);
+                        } else if (menuVisible) {
+                            hideMenu();
+                        }
+                        break;
+                        
+                    case KeyPress:
+                        handleKeyPress(&event.xkey);
+                        if (menuVisible) hideMenu();
+                        break;
+                        
+                    case KeyRelease:
+                        handleKeyRelease(&event.xkey);
+                        break;
+                        
+                    case ClientMessage:
+                        if (event.xclient.data.l[0] == wmDeleteWindow) {
+                            running = 0;
+                        }
+                        break;
+                        
+                    case ConfigureNotify:
+                        // Window resized
+                        renderFrame();
+                        break;
+                }
             }
         }
         
